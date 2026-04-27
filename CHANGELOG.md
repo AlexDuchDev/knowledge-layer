@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-04-27
+
+> First **publicly published artifacts** on GHCR. The earlier `[0.1.0]` entry below documents an internal documentation/tooling milestone from 2026-04-21 — no images were published for that tag. v0.2.0 is therefore the first release operators outside the original dev environment can pull and run end-to-end. Four `-rcN` candidates surfaced and fixed install-time bugs (GHCR uppercase rejection, ExternalRef drop in source-feed validation, INSERT placeholder count mismatch in CreateSourceFeed) before this stable cut.
+
 ### Release summary
 
 This release establishes Knowledge Layer as a **production-ready, single-tenant, self-hosted organizational memory platform** under the Apache 2.0 licence. It is the first tag intended for external operators — every code path that ships now carries the access, audit, and privacy guarantees the project was designed around, and every operator-facing surface (deployment, upgrade, rollback, secret rotation, alerting, dashboards, runbooks) ships alongside it.
@@ -31,6 +35,16 @@ This release establishes Knowledge Layer as a **production-ready, single-tenant,
 - Contributors → [CONTRIBUTING.md](CONTRIBUTING.md), [GOVERNANCE.md](GOVERNANCE.md), [SUPPORT.md](SUPPORT.md).
 
 Detailed phase-by-phase changes follow.
+
+### Fixed — RC-cycle hardening (2026-04-27)
+
+Three install-time defects surfaced by RC validation (`docs/RC_VALIDATION.md`) and fixed pre-stable. None of these reached an external operator — that is the point of the rc loop.
+
+- **CI: lowercase GHCR owner.** `.github/workflows/release.yml` was rejecting every multi-arch push with `invalid tag ghcr.io/<Owner>/...: repository name must be lowercase`. Compose the GHCR path at use-time from `${GITHUB_REPOSITORY_OWNER,,}`; reduce `env.{API,WEB}_IMAGE_NAME` to image-suffix only. Surfaced in v0.1.0-rc1.
+- **API: `POST /source-feeds` candidate dropped `ExternalRef`.** Adapter-level config-save validation (Phase 4.2.2) built the candidate `*SourceFeed` by hand and silently dropped `ExternalRef` (and several other input fields). Effect: every filesystem / telegram / linear / asana / confluence feed creation rejected with a misleading error. Fix: introduce `CreateSourceFeedInput.CandidateSourceFeed()` that mirrors all 13 input fields; locked in with `TestCandidateSourceFeed_mirrorsAllInputFields`. Surfaced in v0.1.0-rc2.
+- **API: `CreateSourceFeed` INSERT placeholder count off-by-one.** `INSERT INTO source_feeds (... 17 columns ...) VALUES ($1..$16,'draft','idle')` had 18 expressions for 17 columns; PG rejected with SQLSTATE 42601 and the row never inserted. Fix: `$1..$15` + 2 literals = 17. Locked in with new DB-backed `TestCreateSourceFeed_insertsRow` regression test that runs in the verify job's Postgres service. Surfaced in v0.1.0-rc3.
+
+Each rc surfaced exactly one defect on the documented no-credentials evaluator path (filesystem connector → first source feed). v0.1.0-rc4 ran the full validation cleanly: POST `/source-feeds` returns 201 and writes `source_feed.created` to `audit_events`.
 
 ### Added — Follow-up pass (2026-04-25)
 
