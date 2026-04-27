@@ -1,0 +1,33 @@
+# Optional full-stack smoke (build + compose + curl). Run manually; slower than CI check job.
+name: Smoke compose (manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose up (build)
+        run: docker compose up -d --build
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sfS http://localhost:18080/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API not healthy in time"
+          docker compose logs api
+          exit 1
+      - name: Smoke script
+        env:
+          OPENAI_MOCK: "1"
+          API_BASE: "http://localhost:18080"
+        run: bash scripts/smoke-local.sh
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 200

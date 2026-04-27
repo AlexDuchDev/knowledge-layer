@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # Must match docker-compose (pgvector): migrations use CREATE EXTENSION vector.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: knowledge
+          POSTGRES_PASSWORD: knowledge
+          POSTGRES_DB: knowledge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U knowledge -d knowledge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://knowledge:knowledge@localhost:5432/knowledge?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+      - name: Go test (API module)
+        run: go test ./apps/api/... -count=1
+      - name: Golden-path API smoke (migrated DB + curl)
+        env:
+          DATABASE_URL: postgres://knowledge:knowledge@localhost:5432/knowledge?sslmode=disable
+          APP_ENV: local
+          OPENAI_MOCK: "1"
+        run: |
+          cd apps/api
+          go run ./cmd/api &
+          API_PID=$!
+          trap 'kill $API_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 45); do
+            if curl -sfS http://localhost:8080/health >/dev/null; then
+              break
+            fi
+            if [ "$i" -eq 45 ]; then
+              echo "API did not become healthy in time"
+              exit 1
+            fi
+            sleep 1
+          done
+          bash ../../scripts/smoke-local.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Web install
+        run: cd apps/web && npm ci
+      - name: Web lint & typecheck
+        run: cd apps/web && npm run lint && npm run typecheck
+      - name: Shared typecheck
+        run: cd packages/shared && npm ci && npm run typecheck

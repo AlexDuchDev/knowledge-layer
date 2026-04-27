@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knowledge-layer-config
+  namespace: knowledge-layer
+  labels:
+    app.kubernetes.io/name: knowledge-layer
+data:
+  # Profile — production gates ValidateAPI / ValidateWorker. See docs/PRODUCTION_HARDENING.md.
+  APP_ENV: "production"
+  AUTH_MODE: "session"
+  APP_PUBLIC_URL: "https://kl.example.com"
+  API_PORT: "8080"
+
+  # Search — leave OPENSEARCH_URL empty if you do not run OpenSearch (Search degrades to ILIKE).
+  OPENSEARCH_URL: "https://opensearch.internal:9200"
+
+  # Workers expose /ops/health on these ports (Phase 2.2.1).
+  JOBWORKER_HEALTH_PORT: ":9001"
+  CONNECTORWORKER_HEALTH_PORT: ":9002"
+
+  # Web build-time variables. NEXT_PUBLIC_API_URL must match the public API origin.
+  NEXT_PUBLIC_API_URL: "https://kl.example.com"
+  NEXT_PUBLIC_USE_DEV_HEADER: "false"
+
+  # Optional modules (set the matching env in the Secret to actually enable; flag here is metadata).
+  # SECOND_BRAIN_PREBRIEF_TICK: "0"
+  # NEO4J_URL: "bolt://neo4j.internal:7687"

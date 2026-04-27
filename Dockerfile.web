@@ -1,0 +1,29 @@
+# Build: docker build -f Dockerfile.web -t knowledge-layer-web .
+# Local/dev stack; harden user and secrets for production.
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY apps/web/package.json apps/web/package-lock.json ./
+RUN npm ci
+COPY apps/web/ ./
+RUN mkdir -p public
+ENV NEXT_TELEMETRY_DISABLED=1
+# NEXT_PUBLIC_* is inlined at build time — must match published API host port (see docker-compose.yml API_HOST_PORT).
+ARG NEXT_PUBLIC_API_URL=http://localhost:18080
+ARG NEXT_PUBLIC_USE_DEV_HEADER=true
+ARG NEXT_PUBLIC_PRINCIPAL_USER_ID=30000000-0000-0000-0000-000000000001
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_USE_DEV_HEADER=$NEXT_PUBLIC_USE_DEV_HEADER
+ENV NEXT_PUBLIC_PRINCIPAL_USER_ID=$NEXT_PUBLIC_PRINCIPAL_USER_ID
+RUN npm run build
+
+FROM node:22-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY apps/web/package.json apps/web/package-lock.json ./
+RUN npm ci --omit=dev
+COPY --from=build /app/.next ./.next
+COPY --from=build /app/public ./public
+COPY apps/web/next.config.ts ./next.config.ts
+EXPOSE 3000
+CMD ["npm", "run", "start", "--", "-p", "3000"]

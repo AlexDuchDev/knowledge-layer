@@ -1,0 +1,1 @@
+-- Reserved for future schema steps; search uses entity_search_projection (created in 000002).

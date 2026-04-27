@@ -1,0 +1,14 @@
+# Merged automatically with docker-compose.yml for local persistence.
+# Create host dirs once: mkdir -p data/postgres data/redis data/opensearch
+services:
+  postgres:
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+
+  redis:
+    volumes:
+      - ./data/redis:/data
+
+  opensearch:
+    volumes:
+      - ./data/opensearch:/usr/share/opensearch/data

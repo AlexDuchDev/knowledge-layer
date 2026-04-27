@@ -1,0 +1,270 @@
+{
+  "annotations": { "list": [] },
+  "description": "Knowledge Layer overview — one-screen operator view backed by GET /metrics (Phase 2.2.2). Update alongside apps/api/internal/platform/metrics/metrics.go when the metric surface changes.",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["knowledge-layer", "operations"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "current": {}
+      },
+      {
+        "name": "job",
+        "label": "Scrape job",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "$datasource" },
+        "query": "label_values(http_requests_total, job)",
+        "refresh": 2,
+        "current": { "text": "knowledge-api", "value": "knowledge-api" }
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Knowledge Layer — overview",
+  "uid": "kl-overview",
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "API request rate",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "decimals": 1 }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["mean"] }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"$job\",route!~\"/health|/metrics\"}[5m]))",
+          "refId": "A",
+          "legendFormat": "req/s"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "5xx rate (excludes /health, /metrics)",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["mean"] },
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"$job\",code=~\"5..\",route!~\"/health|/metrics\"}[5m])) / clamp_min(sum(rate(http_requests_total{job=\"$job\",route!~\"/health|/metrics\"}[5m])), 1)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Postgres pool utilisation",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "red", "value": 0.85 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["mean"] }, "colorMode": "value" },
+      "targets": [
+        {
+          "expr": "postgres_pool_acquired_conns{job=\"$job\"} / clamp_min(postgres_pool_max_conns{job=\"$job\"}, 1)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Goroutines",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "go_goroutines{job=\"$job\"}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Heap in use",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" }
+      },
+      "targets": [
+        { "expr": "go_memstats_heap_inuse_bytes{job=\"$job\"}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Process RSS",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "targets": [
+        { "expr": "process_resident_memory_bytes{job=\"$job\"}", "refId": "A" }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "HTTP request rate by route (top 10)",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (route) (rate(http_requests_total{job=\"$job\",route!~\"/health|/metrics\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "HTTP 5xx rate by route",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum by (route) (rate(http_requests_total{job=\"$job\",code=~\"5..\",route!~\"/health|/metrics\"}[5m]))",
+          "refId": "A",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Knowledge job duration p95 by job_type",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (job_type, le) (rate(knowledge_job_run_duration_seconds_bucket{job=\"$job\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "p95 — {{job_type}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Connector sync duration p95 by adapter_kind",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (adapter_kind, le) (rate(connector_sync_duration_seconds_bucket{job=\"$job\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "p95 — {{adapter_kind}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Asynq queue depth (pending)",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "asynq_queue_pending{job=\"$job\"}",
+          "refId": "A",
+          "legendFormat": "{{queue}}"
+        }
+      ],
+      "description": "Pending tasks per Asynq queue. A sustained backlog with active=0 is the canonical 'worker stalled' signal — see docs/ALERTING_PLAYBOOK.md."
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Asynq queue failed (window)",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "expr": "asynq_queue_failed{job=\"$job\"}",
+          "refId": "A",
+          "legendFormat": "{{queue}}"
+        }
+      ]
+    },
+
+    {
+      "id": 40,
+      "type": "timeseries",
+      "title": "Postgres pool — total / idle / acquired",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "targets": [
+        { "expr": "postgres_pool_total_conns{job=\"$job\"}", "refId": "A", "legendFormat": "total" },
+        { "expr": "postgres_pool_idle_conns{job=\"$job\"}", "refId": "B", "legendFormat": "idle" },
+        { "expr": "postgres_pool_acquired_conns{job=\"$job\"}", "refId": "C", "legendFormat": "acquired" },
+        { "expr": "postgres_pool_max_conns{job=\"$job\"}", "refId": "D", "legendFormat": "max" }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Postgres pool acquire rate",
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "targets": [
+        {
+          "expr": "rate(postgres_pool_acquire_count_total{job=\"$job\"}[5m])",
+          "refId": "A",
+          "legendFormat": "acquires/sec"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    }
+  ]
+}

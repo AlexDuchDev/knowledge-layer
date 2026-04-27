@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge-connectorworker
+  namespace: knowledge-layer
+  labels:
+    app.kubernetes.io/name: knowledge-layer
+    app.kubernetes.io/component: connectorworker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: knowledge-layer
+      app.kubernetes.io/component: connectorworker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: knowledge-layer
+        app.kubernetes.io/component: connectorworker
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: connectorworker
+          image: ghcr.io/your-org/knowledge-layer-api:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/app/knowledge-connectorworker"]
+          ports:
+            - name: health
+              containerPort: 9002
+          envFrom:
+            - configMapRef:
+                name: knowledge-layer-config
+            - secretRef:
+                name: knowledge-layer-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowledge-connectorworker
+  namespace: knowledge-layer
+  labels:
+    app.kubernetes.io/name: knowledge-layer
+    app.kubernetes.io/component: connectorworker
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: knowledge-layer
+    app.kubernetes.io/component: connectorworker
+  ports:
+    - name: health
+      port: 9002
+      targetPort: 9002
+      protocol: TCP

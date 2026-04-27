@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS policy_overrides;
+DROP TABLE IF EXISTS domain_grants;
+DROP TABLE IF EXISTS domains;
+DROP TABLE IF EXISTS access_policies;
+DROP TABLE IF EXISTS user_role_bindings;
+DROP TABLE IF EXISTS role_action_permissions;
+DROP TABLE IF EXISTS action_permissions;
+DROP TABLE IF EXISTS roles;
+DROP TABLE IF EXISTS user_team_memberships;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_primary_team_fk;
+DROP TABLE IF EXISTS teams;
+DROP TABLE IF EXISTS users;

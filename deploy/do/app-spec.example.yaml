@@ -1,0 +1,72 @@
+# DigitalOcean App Platform — EXAMPLE ONLY
+# Replace: YOUR_REGISTRY, YOUR_REPO, secrets, regions, instance sizes.
+# Postgres must support pgvector; use Managed Database + reference connection string in env.
+# Workers often run as separate app components or on a worker service with same image + command.
+
+name: knowledge-layer-example
+region: nyc
+
+services:
+  - name: api
+    github:
+      repo: YOUR_ORG/YOUR_REPO
+      branch: main
+      deploy_on_push: true
+    dockerfile_path: Dockerfile.api
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    routes:
+      - path: /api
+    envs:
+      - key: APP_ENV
+        value: production
+      - key: API_PORT
+        value: "8080"
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: EV[1:placeholder]
+      - key: REDIS_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: EV[1:placeholder]
+      - key: SESSION_SECRET
+        scope: RUN_TIME
+        type: SECRET
+        value: EV[1:placeholder]
+      - key: AUTH_MODE
+        value: session
+      - key: CORS_ALLOW_ORIGINS
+        scope: RUN_TIME
+        type: SECRET
+        value: EV[1:placeholder]
+      - key: APP_PUBLIC_URL
+        scope: RUN_TIME
+        value: https://app.example.com
+      - key: OPS_AUTH_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+        value: EV[1:placeholder]
+
+  - name: web
+    github:
+      repo: YOUR_ORG/YOUR_REPO
+      branch: main
+      deploy_on_push: true
+    dockerfile_path: Dockerfile.web
+    http_port: 3000
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    routes:
+      - path: /
+    envs:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://app.example.com/api
+      - key: NEXT_PUBLIC_USE_DEV_HEADER
+        value: "false"
+      - key: NEXT_PUBLIC_DOCS_BASE_URL
+        value: https://github.com/YOUR_ORG/YOUR_REPO/blob/main/docs
+
+# Add jobworker / connectorworker as separate components with image from same repo
+# and commands: e.g. ["./jobworker"] — depends on your Dockerfile ENTRYPOINT layout.

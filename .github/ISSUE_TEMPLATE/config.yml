@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/security/advisories/new
+    about: Report a security issue privately. See SECURITY.md for our coordinated disclosure policy — do NOT open a public issue for security findings.
+  - name: Documentation lookup
+    url: https://github.com/?path=docs/INDEX.md
+    about: Looking for installation, deployment, or concept docs? Start at docs/INDEX.md or docs/GLOSSARY.md before opening an issue.

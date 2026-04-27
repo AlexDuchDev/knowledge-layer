@@ -1,0 +1,1 @@
+Moved to [CONFIG_ENV.md](CONFIG_ENV.md) — the canonical environment-variable reference (covering app runtime, DB/storage/search, auth, queue/workers, connector secrets, AI/model config, and observability).

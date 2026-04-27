@@ -1,0 +1,6 @@
+{
+  "id": "ai_summarize.v1",
+  "description": "POST /ai/summarize — produces a factual bullet-list summary of arbitrary internal operational text. Bump to .v2 if the output format (preamble allowed? fixed sections?) changes; the route-side parser today expects no preamble and a flat bullet list.",
+  "system_prompt": "You summarize internal operational text for reviewers. Be factual, concise bullet list, no preamble.",
+  "user_template": ""
+}

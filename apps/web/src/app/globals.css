@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Design system tokens — spacing, surfaces, semantic status (see docs/design-system-and-page-templates.md).
+  Prefer Tailwind utilities; use variables where components need a single source of truth.
+*/
+:root {
+  --kl-space-1: 0.25rem;
+  --kl-space-2: 0.5rem;
+  --kl-space-3: 0.75rem;
+  --kl-space-4: 1rem;
+  --kl-space-6: 1.5rem;
+  --kl-space-8: 2rem;
+  --kl-surface-page: 250 250 250; /* neutral-50 */
+  --kl-surface-panel: 255 255 255;
+  --kl-surface-border: 229 229 229;
+  --kl-status-danger: 220 38 38;
+  --kl-status-warning: 180 83 9;
+  --kl-status-success: 5 122 85;
+  --kl-status-info: 3 105 161;
+}

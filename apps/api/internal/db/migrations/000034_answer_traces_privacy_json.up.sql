@@ -1,0 +1,2 @@
+ALTER TABLE answer_traces
+    ADD COLUMN IF NOT EXISTS privacy_json JSONB NOT NULL DEFAULT '{}';

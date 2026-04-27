@@ -1,0 +1,161 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: knowledge
+      POSTGRES_PASSWORD: knowledge
+      POSTGRES_DB: knowledge
+    ports:
+      # Default to a high, low-collision host port. Many dev machines already bind :5432.
+      # Override with POSTGRES_HOST_PORT if you want localhost:5432.
+      - "${POSTGRES_HOST_PORT:-25432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledge -d knowledge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      # Default to a high, low-collision host port. Many dev machines already bind :6379.
+      # Override with REDIS_HOST_PORT if you want localhost:6379.
+      - "${REDIS_HOST_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # OpenSearch: security disabled for local dev only. Production: TLS + auth — see docs/OPENSEARCH_PROD_VS_DEV.md
+  opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      # Default to a high, low-collision host port. Many dev machines already bind :9200
+      # (Elasticsearch/OpenSearch). Override with OPENSEARCH_HOST_PORT if needed.
+      - "${OPENSEARCH_HOST_PORT:-19200}:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5.26
+    environment:
+      # NOTE: Default password is for local dev only.
+      NEO4J_AUTH: neo4j/neo4jpassword
+      NEO4J_server_memory_pagecache_size: 512M
+      NEO4J_server_memory_heap_initial__size: 512M
+      NEO4J_server_memory_heap_max__size: 512M
+    ports:
+      # Default to a high, low-collision host ports.
+      - "${NEO4J_HTTP_HOST_PORT:-17474}:7474"
+      - "${NEO4J_BOLT_HOST_PORT:-17687}:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      # Default to a high, low-collision host port. Many dev machines already bind :8080.
+      # Override with API_HOST_PORT if you want localhost:8080.
+      - "${API_HOST_PORT:-18080}:8080"
+    environment:
+      DATABASE_URL: postgres://knowledge:knowledge@postgres:5432/knowledge?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      OPENSEARCH_URL: http://opensearch:9200
+      NEO4J_URL: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: neo4jpassword
+      # Match the published web host port (see `web` service). Browsers send Origin based on the page URL.
+      CORS_ALLOW_ORIGINS: http://localhost:${WEB_HOST_PORT:-13000}
+      AUTH_MODE: development_header
+      APP_ENV: local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    volumes:
+      - ./data:/data:ro
+
+  jobworker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    entrypoint: ["/app/knowledge-jobworker"]
+    environment:
+      DATABASE_URL: postgres://knowledge:knowledge@postgres:5432/knowledge?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      OPENSEARCH_URL: http://opensearch:9200
+      NEO4J_URL: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: neo4jpassword
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    volumes:
+      - ./data:/data:ro
+
+  connectorworker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    entrypoint: ["/app/knowledge-connectorworker"]
+    environment:
+      DATABASE_URL: postgres://knowledge:knowledge@postgres:5432/knowledge?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      OPENSEARCH_URL: http://opensearch:9200
+      NEO4J_URL: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: neo4jpassword
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    volumes:
+      - ./data:/data:ro
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:${API_HOST_PORT:-18080}
+        NEXT_PUBLIC_USE_DEV_HEADER: "true"
+        NEXT_PUBLIC_PRINCIPAL_USER_ID: ${NEXT_PUBLIC_PRINCIPAL_USER_ID:-30000000-0000-0000-0000-000000000001}
+    ports:
+      # Default to a high, low-collision host port. Many dev machines already bind :3000.
+      # Override with WEB_HOST_PORT if you want localhost:3000.
+      - "${WEB_HOST_PORT:-13000}:3000"
+    environment:
+      # Browser calls must target the published API host port (not the in-network service DNS name).
+      NEXT_PUBLIC_API_URL: http://localhost:${API_HOST_PORT:-18080}
+      NEXT_PUBLIC_USE_DEV_HEADER: "true"
+    depends_on:
+      - api

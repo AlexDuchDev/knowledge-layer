@@ -1,0 +1,20 @@
+.env
+.env.local
+.env.*.local
+*.pem
+
+# macOS Finder metadata
+.DS_Store
+
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.exe
+*.test
+*.out
+vendor/
+
+# Local Docker bind-mount data (postgres, redis, opensearch)
+data/

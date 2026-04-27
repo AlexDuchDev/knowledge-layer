@@ -1,0 +1,1 @@
+DELETE FROM connectors WHERE id = '20000000-0000-0000-0000-000000000003' AND type = 'slack';

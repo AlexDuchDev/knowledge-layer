@@ -1,0 +1,224 @@
+name: Release
+
+# Triggers on annotated/lightweight tags matching `vX.Y.Z` (or `vX.Y.Z-rcN`).
+# Publishes API + Web images to GitHub Container Registry and creates a GitHub Release
+# with the matching CHANGELOG.md section as the body.
+#
+# Required repository setup:
+#   - GHCR is enabled on the org / user account that owns this repo (default for personal repos).
+#   - Workflow has `contents: write` (release creation) and `packages: write` (image push).
+#     These are the per-job permissions declared below — no org-wide PAT needed.
+#   - Tag the release on a CHANGELOG.md commit that has a matching `## [vX.Y.Z]` heading
+#     (or the workflow falls back to "see CHANGELOG.md" in the release body).
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # Matches the manifests in deploy/k8s/*-deployment.yaml — keep in sync if you rename.
+  API_IMAGE_NAME: ${{ github.repository_owner }}/knowledge-layer-api
+  WEB_IMAGE_NAME: ${{ github.repository_owner }}/knowledge-layer-web
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Pre-flight: re-run the same gates main/PR runs through. A tag push is not
+  # automatically guaranteed to be on a green commit (someone could tag an old
+  # SHA), so we re-verify before publishing artifacts.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify (pre-publish)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: knowledge
+          POSTGRES_PASSWORD: knowledge
+          POSTGRES_DB: knowledge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U knowledge -d knowledge"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://knowledge:knowledge@localhost:5432/knowledge?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install web deps
+        run: npm ci
+        working-directory: apps/web
+      - name: Install shared deps
+        run: npm ci || true
+        working-directory: packages/shared
+      - name: make lint
+        run: make lint
+      - name: make typecheck
+        run: make typecheck
+      - name: Go tests
+        run: go test ./... -count=1
+        working-directory: apps/api
+      - name: Web build
+        run: npm run build
+        working-directory: apps/web
+
+  # ---------------------------------------------------------------------------
+  # Publish API image: linux/amd64 + linux/arm64 to ghcr.io.
+  # Tags: `vX.Y.Z` and `latest` (latest only on stable releases, not -rc).
+  # ---------------------------------------------------------------------------
+  publish-api:
+    name: Publish API image
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute image tags
+        id: tags
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.API_IMAGE_NAME }}"
+          OUT="${IMAGE}:${TAG}"
+          # Promote to :latest only when this is a stable release (no pre-release suffix).
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            OUT="${OUT},${IMAGE}:latest"
+          fi
+          echo "tags=${OUT}" >> "$GITHUB_OUTPUT"
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.api
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+          provenance: false
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+  # ---------------------------------------------------------------------------
+  # Publish Web image. NEXT_PUBLIC_* are baked at build time — operators who
+  # need a different API origin must rebuild from source. The published Web
+  # image targets the same-host ingress pattern (NEXT_PUBLIC_API_URL set to a
+  # placeholder, expecting reverse-proxy on the same host).
+  # ---------------------------------------------------------------------------
+  publish-web:
+    name: Publish Web image
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute image tags
+        id: tags
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          IMAGE="${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}"
+          OUT="${IMAGE}:${TAG}"
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            OUT="${OUT},${IMAGE}:latest"
+          fi
+          echo "tags=${OUT}" >> "$GITHUB_OUTPUT"
+      - name: Build and push Web image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.web
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          # Same-host pattern: ingress proxies API + Web from one origin.
+          # Operators on a different topology must rebuild with their own NEXT_PUBLIC_API_URL.
+          build-args: |
+            NEXT_PUBLIC_API_URL=
+            NEXT_PUBLIC_USE_DEV_HEADER=false
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+          provenance: false
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  # ---------------------------------------------------------------------------
+  # Create the GitHub Release with notes extracted from CHANGELOG.md.
+  # The "## [vX.Y.Z]" section becomes the release body; if no matching section
+  # exists the release body falls back to a pointer.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [publish-api, publish-web]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Try to find a `## [vX.Y.Z]` heading in CHANGELOG.md and copy until the next `## [`.
+          NOTES_FILE="$(mktemp)"
+          if grep -q "^## \[$TAG\]" CHANGELOG.md; then
+            awk -v tag="$TAG" '
+              $0 ~ "^## \\[" tag "\\]" { capture=1; next }
+              capture && /^## \[/ { capture=0 }
+              capture { print }
+            ' CHANGELOG.md > "$NOTES_FILE"
+          else
+            cat <<EOF > "$NOTES_FILE"
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${GITHUB_SHA}/CHANGELOG.md) — no section matched the tag automatically.
+
+          Container images:
+          - \`ghcr.io/${{ env.API_IMAGE_NAME }}:${TAG}\`
+          - \`ghcr.io/${{ env.WEB_IMAGE_NAME }}:${TAG}\`
+          EOF
+          fi
+          {
+            echo 'body<<EOF'
+            cat "$NOTES_FILE"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ steps.notes.outputs.body }}
+          # `-rcN` and similar suffixes mark the release as pre-release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: false

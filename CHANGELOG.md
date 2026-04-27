@@ -1,0 +1,172 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Release summary
+
+This release establishes Knowledge Layer as a **production-ready, single-tenant, self-hosted organizational memory platform** under the Apache 2.0 licence. It is the first tag intended for external operators — every code path that ships now carries the access, audit, and privacy guarantees the project was designed around, and every operator-facing surface (deployment, upgrade, rollback, secret rotation, alerting, dashboards, runbooks) ships alongside it.
+
+**What's IN scope** — the full release contract lives in [docs/OSS_V1_SCOPE.md](docs/OSS_V1_SCOPE.md). At a glance: connector-based ingestion with raw preservation, permission-aware retrieval and Q&A, the knowledge-jobs engine, the native Control Plane (governance queues, scenarios, presets, setup wizard, roles, jobs runs, effective-access debug view), and the AI Privacy Vault that gates every outbound LLM call.
+
+**What's OUT of scope** — multi-tenant deployment is explicitly off the table per [ADR-0014](docs/adr/0014-single-tenant-deployment-stance.md): one organization per instance. Some surfaces (Second Brain, GraphRAG) are feature-flag-gated optional modules — see *Optional modules* in [OSS_V1_SCOPE.md](docs/OSS_V1_SCOPE.md). Decision-board UI, Project Memory, additional webhook adapters, and a Second-Brain plugin contract are deferred to v1.1 / v1.2 / v2 per [LIMITATIONS.md](docs/LIMITATIONS.md).
+
+**Highlights since the prior tag**:
+- **Two production-quality webhook adapters** (Slack, Mattermost) with a shared `WebhookHandler` contract, full HMAC + replay protection on Slack, constant-time-compare token auth on Mattermost, and 15 unit tests between them — no live workspace required.
+- **Five wired knowledge-job processors** (`weekly_digest`, `decision_extraction`, `planning_summary`, `stale_scan`, `support_trends_extraction`) — unsupported job types now error instead of silently completing.
+- **Native Control Plane builders** for six governance queues (Reviews, Approvals, Stale, Failed jobs, Failed syncs, Policy exceptions) plus Scenarios, Presets, Setup wizard, Roles catalog, Job runs list, and Effective-access debug view.
+- **Centralised publish gate** (`EntityRepo.Publish`) — one chokepoint for entity → published, with audit + version snapshot + projection update in a single transaction; PATCH on a published entity is now blocked.
+- **Centralised LLM prompt registry** (`internal/ai/prompts/`) with 5 versioned templates and `prompt_template_id` threaded through the privacy gateway so every answer's prompt version is in `answer_traces`.
+- **Full release CI** (`.github/workflows/release.yml`): tag-triggered, multi-arch (amd64 + arm64) GHCR publish for API + web images, with `:latest` only on stable tags.
+- **Operator-facing infrastructure docs**: Kubernetes manifest set ([deploy/k8s/](deploy/k8s/)), Grafana dashboard exports ([deploy/grafana/](deploy/grafana/)), [docs/SECRET_ROTATION.md](docs/SECRET_ROTATION.md), [docs/ALERTING_PLAYBOOK.md](docs/ALERTING_PLAYBOOK.md), [docs/UPGRADE_AND_ROLLBACK.md](docs/UPGRADE_AND_ROLLBACK.md), bare-metal systemd runbook in [docs/SELF_HOSTED.md](docs/SELF_HOSTED.md).
+
+**Where to start**:
+- New evaluators → [README.md](README.md) quick-start.
+- New operators → [docs/SELF_HOSTED.md](docs/SELF_HOSTED.md), then [docs/PRODUCTION_HARDENING.md](docs/PRODUCTION_HARDENING.md) and [docs/ALERTING_PLAYBOOK.md](docs/ALERTING_PLAYBOOK.md).
+- Existing operators → [docs/UPGRADE_AND_ROLLBACK.md](docs/UPGRADE_AND_ROLLBACK.md) before deploying.
+- Contributors → [CONTRIBUTING.md](CONTRIBUTING.md), [GOVERNANCE.md](GOVERNANCE.md), [SUPPORT.md](SUPPORT.md).
+
+Detailed phase-by-phase changes follow.
+
+### Added — Follow-up pass (2026-04-25)
+
+- **Prompt registry — full extraction** (Phase 4.1.1 follow-up): three more inline prompts moved into the central `internal/ai/prompts/templates/` registry — `ai_summarize.v1.json` (POST /ai/summarize), `ai_draft_suggestions.v1.json` (POST /ai/draft-suggestions), and `graphrag_entity_extract.v1.json` (graphrag/extract entity extraction). Each call site now uses `prompts.Get(id)` and threads `PromptTemplateID` into the privacy gateway so audit/answer-trace records the template version. Legacy `internal/graphrag/prompts/` package deleted (single-file embed loader superseded by the central registry). Test count for the registry doubles from 4 to 8 — every embedded template gets a load + key-phrase smoke check so a rename of a `.json` file fails CI loudly.
+- **Mattermost webhook handler** (Phase 2.2.3 follow-up): second adapter implementing the `WebhookHandler` contract, exercising the Outgoing-Webhooks shared-token auth model (form-encoded body, constant-time token compare, 401 on mismatch). Per-feed `outgoing_webhook_token` lives in `connector_config_json` alongside the existing PAT. Sentinel errors map through the central route's status table (401 / 503 / 400) — same observability semantics as Slack. **7 unit tests** in [`adapters/mattermost/webhook_test.go`](apps/api/internal/ingestion_connectors/adapters/mattermost/webhook_test.go): valid token → artifact, bad token rejected, empty token rejected, missing config → 503, malformed form body → 400, external_ref fallback (post_id missing → channel_id:timestamp), constant-time compare smoke. No live Mattermost server required. LIMITATIONS.md and `.env.example` updated to document both adapters' config shapes.
+
+### Added — Phase 4.2.1 + 4.3 closeout (2026-04-25)
+
+- **Centralized publish-gate** (Phase 4.2.1 — closes audit risk #8): new [`EntityRepo.Publish(ctx, entityID, principal)`](apps/api/internal/knowledge_core/entity_repo.go) is the **single canonical path** for moving an entity to `lifecycle_state="published"`. Atomically updates the entity row (lifecycle + approval_status + approved_at + approved_by), inserts an entity_versions snapshot ("publish"), and updates entity_search_projection — all in one transaction with idempotent re-publish handling (`PublishResult{WasPublished, WasIdempotent}`). Returns `ErrAlreadyPublished` semantics via the `WasIdempotent` flag rather than an error.
+- **PATCH guard**: `EntityRepo.Patch` now rejects `lifecycle_state="published"` with `ErrPatchPublishForbidden`. `PATCH /entities/:id` maps it to a 400 directing the caller to the new publish endpoint. Eliminates the previously unguarded path where any caller with the `edit` action could effectively publish via PATCH.
+- **New route**: `POST /entities/:id/publish` — guarded by `AccessEvaluator.Evaluate(action="publish")`. Calls `EntityRepo.Publish`, fires `Search.ReindexEntity`, emits `entity.published` audit event with reason="direct". Returns the updated entity plus `was_published`/`was_idempotent` flags.
+- **Refactored `POST /review-tasks/:id/approve`**: previously did inline `UPDATE entities SET lifecycle_state='published'`. Now calls `EntityRepo.Publish` and emits `entity.published` audit with reason="review_approval". The version snapshot + projection update + audit emission now happen via the same path as direct publish — operators get one chokepoint to monitor.
+- **Grafana dashboard exports** (Phase 4.3): new [`deploy/grafana/`](deploy/grafana/) directory with `knowledge-layer-overview.json` (14 panels: API request rate + 5xx rate by route, duration by job_type and adapter_kind, Asynq queue depths + failed counts, Postgres pool stats + acquire rate, Go runtime). Dashboard uses `$datasource` and `$job` variables so it imports cleanly across instances. README documents three import paths (UI, API, kube-prometheus-stack sidecar) and links to the alerting playbook for matching alert rules.
+
+### Added — Phase 4.1.1 prompt registry (2026-04-25)
+
+- **Versioned LLM prompt registry** at [`apps/api/internal/ai/prompts/`](apps/api/internal/ai/prompts/) — central package with embed-loaded JSON templates under `templates/<id>.json`. Each template carries a stable id (`ask_global_qa.v1`), a description that documents the version-bump rule ("bump to .v2 when output shape, citation rules, or evidence handling change — never repurpose"), a system_prompt, and an optional user_template with `{{name}}` substitution. Loader is sync.Once-cached; unknown placeholders are left as literals so a typo in `Render(params)` is caught in tests instead of silently dropping content.
+- **Reference templates extracted from the inline `buildSystemPrompt`** in `qa/synthesize.go`: [`ask_global_qa.v1.json`](apps/api/internal/ai/prompts/templates/ask_global_qa.v1.json) and [`ask_global_qa_best_trusted.v1.json`](apps/api/internal/ai/prompts/templates/ask_global_qa_best_trusted.v1.json). The Q&A synthesis path now reads from the registry and threads the template id through `privacy.InvokeInput.PromptTemplateID` → `privacy_trace.prompt_template_id`, so `answer_traces.privacy_json` records exactly which template produced each answer.
+- **Audit-trail field**: `InvokeInput.PromptTemplateID` (new, optional) and `prompt_template_id` in the gateway's `privacy_trace` JSON. Empty value = legacy inline prompt (acceptable during the gradual extraction); non-empty = traceable to a registry entry.
+- **Tests**: 5-case unit suite for the registry — load, variant load, unknown id, placeholder leak detection, ID enumeration. Integration tests across qa / retrieval_intelligence remain green.
+- Pattern documented in [`apps/api/internal/README.md`](apps/api/internal/README.md) "where to add new code" — adding an AI flow now means dropping a `.json` template + referencing via `prompts.Get(id)`.
+
+### Added — Phase 4 hardening, second pass (2026-04-25)
+
+- **[ADR-0014: Single-tenant deployment stance](docs/adr/0014-single-tenant-deployment-stance.md)** — accepts the long-implicit single-tenant contract as a stable architectural decision. Codifies "no `tenant_id`, no tenant routing, no shared-cluster isolation primitives", documents the three rejected alternatives (soft-tenancy via domain reuse, `tenant_id` on every table, schema-per-tenant), and specifies the revisit gate (any future multi-tenant ADR must include a worked schema-migration plan + per-step access-pipeline review). LIMITATIONS.md gets a new row pointing to it.
+- **Connector validation at config-save** (Phase 4.2.2): new `Service.ValidateSourceFeed(ctx, *SourceFeed)` runs adapter-level validation against a candidate feed and is now called inline from `POST /source-feeds` (before insert) and `PATCH /source-feeds/:id` (against an overlay of the existing feed + new config — no DB write if validation fails). New `POST /source-feeds/validate` endpoint runs pure dry-run validation for the source-feed wizard to surface inline errors before commit. Bad configs are rejected at save time rather than at the first sync attempt.
+- **AI gateway lint-rule** (Phase 4.1.2): new [`apps/api/.golangci.yml`](apps/api/.golangci.yml) with a depguard rule that blocks unsanctioned imports of `internal/llm`. Allowed importers (current legitimate set: ai/privacy, qa, embeddings per ADR-0013, graphrag/extract legacy, app, httpserver, cmd/connectorworker, cmd/api) are explicit; any new package importing `llm` triggers the rule. Plus opinionated checks (errcheck, ineffassign, misspell, unused). Not yet a CI gate — ships as documentation enforcement; CONTRIBUTING.md instructs contributors to run `golangci-lint run ./...` locally before PR. Aligns with the existing "Things to avoid" guidance in `apps/api/internal/README.md`.
+
+### Added — Phase 3.4 + Phase 4 first-pass (2026-04-25)
+
+- **Kubernetes deployment example** at [`deploy/k8s/`](deploy/k8s/) — minimum-viable manifest set: `namespace.yaml`, `configmap.yaml`, `secret.example.yaml` (template — not for commit), API + jobworker + connectorworker + web Deployments with rolling updates, hardened security context (runAsNonRoot, dropped capabilities, readOnlyRootFilesystem where applicable), liveness + readiness + startup probes hitting `/health`, and an example `ingress.example.yaml` with the full route prefix list. README walks operators through `kubectl apply` order, secret-creation alternatives, port-forward verification, and a production checklist that maps to PRODUCTION_HARDENING.md. Closes the "DigitalOcean is the only deployment example" gap from the system audit.
+- **Release CI workflow** at [`.github/workflows/release.yml`](.github/workflows/release.yml) — fires on `v*` tag push, re-runs lint/typecheck/tests/build on the tagged SHA before publishing (a tag pointing at an old commit can't ship a broken image), then builds and pushes multi-arch (amd64 + arm64) `knowledge-layer-api` and `knowledge-layer-web` images to GHCR with `vX.Y.Z` and conditional `:latest` tags (stable releases only — pre-releases like `v0.X.Y-rc1` skip `:latest`). Creates a GitHub Release with the matching CHANGELOG section as the body, marks `-rcN` tags as pre-release. [`docs/RELEASING.md`](docs/RELEASING.md) updated with the automated tag-to-release flow.
+- **[`docs/SECRET_ROTATION.md`](docs/SECRET_ROTATION.md)** — every secret Knowledge Layer holds, with rotation cadence, dual-token windows for `OPS_AUTH_TOKEN`, the three-path strategy for `AI_PRIVACY_VAULT_KEY` rotation (drain + rotate vs in-place re-encryption vs forbidden plaintext fallback), per-feed connector secrets via PATCH, mandatory verification checklist after every rotation.
+- **[`docs/ALERTING_PLAYBOOK.md`](docs/ALERTING_PLAYBOOK.md)** — the seven alerts you almost certainly want, full Prometheus rule snippets for API liveness + 5xx rate, worker stalled vs queue backlog vs failure rate, job p95 + failure rate, connector sync failure rate, Postgres pool saturation/exhaustion, kube-prometheus-stack `PrometheusRule` + `ServiceMonitor` skeletons, audit-event monitoring as a separate compliance channel.
+
+### Added — Phase 3 release readiness (2026-04-25)
+
+- **Code-level READMEs**: new [`apps/api/internal/README.md`](apps/api/internal/README.md) is the canonical module map (every package, layering rules, where-to-add-X table). New [`packages/shared/README.md`](packages/shared/README.md) documents the contract surface. Expanded [`apps/api/README.md`](apps/api/README.md) and [`apps/web/README.md`](apps/web/README.md) with quick-start, layout, env, conventions, boundaries, and per-area docs links — external developers can navigate without grepping.
+- **Issue templates**: [`.github/ISSUE_TEMPLATE/bug_report.md`](.github/ISSUE_TEMPLATE/bug_report.md), [`feature_request.md`](.github/ISSUE_TEMPLATE/feature_request.md), [`docs_improvement.md`](.github/ISSUE_TEMPLATE/docs_improvement.md), plus a `config.yml` that disables blank issues and surfaces the SECURITY.md link. Feature template carries a five-question governance checklist (access / audit / privacy / provenance / failure-mode) so triage gets the right inputs up-front.
+- **Root [`CONTRIBUTING.md`](CONTRIBUTING.md) expansion**: TL;DR clone-to-PR script, ordered "before you start" reading list, local-development table, verification commands (`make lint typecheck test`), PR conventions (one logical change, doc-impact mandatory, ADRs for behavioural changes), filing-issues guidance, optional-modules contract, semver pointer.
+- **[`docs/UPGRADE_AND_ROLLBACK.md`](docs/UPGRADE_AND_ROLLBACK.md)**: zero-downtime rolling upgrade for multi-pod deployments + single-pod path for compose/bare-metal; compatibility matrix (HTTP API, schema, queue payloads, audit events); three rollback strategies (code-only / backward-compatible migration / destructive); Postgres-vs-Redis consistency hazards; mandatory + recommended post-upgrade verification checklist; known upgrade gotchas (Phase 1.1.2 vault-key requirement, dirty-migration recovery, Phase 2.1.5 setup URL change).
+- **Bare-metal runbook in [`docs/SELF_HOSTED.md`](docs/SELF_HOSTED.md)**: ten-step Linux/systemd deployment — system user + dirs, Postgres + pgvector + pgcrypto, build path, env file with production-hardening rules, three systemd unit files (API + jobworker + connectorworker) with hardening flags, journald log retention, web-app unit with reverse-proxy guidance, scrape endpoints incl. worker `/ops/health`, off-host backup cron, upgrade short-form referencing the new runbook.
+
+### Added — Phase 2 increments (2026-04-25, fifth pass)
+
+- **Slack webhook pilot** (Phase 2.2.3 — OSS, no live workspace required): new `WebhookHandler` contract on `ConnectorAdapter` (`HandleWebhook(ctx, WebhookRequest) (*WebhookResult, error)`), Slack adapter implements full Events API verification ([adapters/slack/webhook.go](apps/api/internal/ingestion_connectors/adapters/slack/webhook.go)) — HMAC-SHA256 over `"v0:{ts}:{body}"`, 5-minute replay window, URL-verification challenge handshake, dedup via Slack `event_id`. Per-feed `signing_secret` lives in `connector_config_json`. New HTTP route `POST /connectors/webhook/:adapter_kind/:source_feed_id` with 1 MiB body cap, body-copy before adapter invocation, sentinel-error → HTTP-status mapping (401 bad sig / stale ts / missing headers, 503 missing secret, 400 malformed). New `Service.IngestWebhookResult` persists artifacts under a `transport=webhook` ingestion run with same dedup as polled syncs and inline-normalises via `ProcessQueuedRawArtifact`. **8 unit tests** in [webhook_test.go](apps/api/internal/ingestion_connectors/adapters/slack/webhook_test.go) cover URL verification, event_callback → artifact, bad signature, stale timestamp replay, missing headers, missing secret, case-insensitive header lookup, and unknown-but-signed envelope acceptance — `nowFn` is overridden so signature/replay assertions are deterministic. Operators can curl-replay these fixtures against a local instance with the documented test signing secret.
+- **Native CP Setup wizard** (Phase 2.1.5): `/control-plane/setup` (hub: templates + recent sessions, "New session" CTA) and `/control-plane/setup/session/[id]` (5-step wizard: pick template → toggle connector families → assign initial admin → preview → launch). Each step commits independently; preview surfaces validation issues; launch is gated on a clean preview. Backed by `/api/onboarding/*`. New shared clients [SetupHubClient](apps/web/src/components/control-plane/SetupHubClient.tsx) and [SetupSessionWizardClient](apps/web/src/components/control-plane/SetupSessionWizardClient.tsx). Rewrite for `/control-plane/setup/session/:id` removed from `next.config.ts`; legacy `apps/web/src/app/(dash)/admin/setup/` deleted. Existing `SetupControlPlaneClient.tsx` had broken `/onboarding/...` API paths (missing `/api` prefix); fixed in-place via `sed` so the unmounted sub-pages (templates / launch-preview / launch-result / session/new) work correctly when reached directly.
+
+### Added — Phase 2 increments (2026-04-25, fourth pass)
+
+- **Native CP Governance queues** (Phase 2.1.x — six pages promoted from `CpScaffold` stubs to working operator views): Reviews (`/control-plane/governance/reviews`), Approvals (`/control-plane/governance/approvals`), Stale (`/control-plane/governance/stale`), Failed jobs (`/control-plane/governance/failed-jobs`), Failed syncs (`/control-plane/governance/failed-syncs`), Policy exceptions (`/control-plane/governance/policy-exceptions`). Backed by existing APIs: `/review-tasks`, `/governance/approval-queue`, `/governance/stale-content`, `/ops/failed-runs`, `/governance/policy-exceptions`. New shared module [GovernanceQueueClients](apps/web/src/components/control-plane/GovernanceQueueClients.tsx) provides 6 thin client components with a common `QueueShell` for load/refresh/error state and tree-shakeable per-page imports. CP governance hub page now lists the six queues as cards instead of just cross-links.
+- **Bulk-action affordances** intentionally NOT wired in this iteration — queues are read-only triage views; mutations (approve/dismiss/retry) remain on per-item entity workflow tools and the existing mutation API endpoints.
+
+### Added — Phase 2 increments (2026-04-25, third pass)
+
+- **Native CP Scenarios builder** (Phase 2.1.2): `/control-plane/scenarios` (catalog, list + presets, create-from-preset form) and `/control-plane/scenarios/[id]` (detail with definition + preview JSON, builder section outline) now render natively. Removed the `next.config.ts` rewrite for `/control-plane/scenarios` and the `middleware.ts` rewrite for `/control-plane/scenarios/[id]`; deleted `apps/web/src/app/(dash)/admin/scenarios/`. Inbound 308 redirects from `/admin/scenarios` retained.
+- **Native CP Presets catalog** (Phase 2.1.4): `/control-plane/presets` (filterable list with type/category axis filters) and `/control-plane/presets/[id]` (entry, categories, related presets, preview, instantiate form) now render natively. Removed both `next.config.ts` rewrite and `middleware.ts` matcher for `/control-plane/presets/*`; deleted `apps/web/src/app/(dash)/admin/presets/`. The `middleware.ts` matcher list is now down to a single entry (`/control-plane/jobs/:path*`).
+
+### Fixed
+
+- **`/source-feeds` production build**: wrapped `useSearchParams()` in a `Suspense` boundary so Next.js 15 prerender succeeds (`SourceFeedsPageInner` + outer `SourceFeedsPage`). Same pattern as `search`, `invite`, `login`, and `entities/[id]` already use. Unblocks `npm run build` end-to-end.
+
+### Added — Phase 2 increments (2026-04-24, second pass)
+
+- **Explore from here** (Phase 2.3.1): bounded one-hop entity-level traversal of the GraphRAG co-mention graph with permission filtering. New API `GET /entities/:id/graph-explore?max_nodes=…` (returns `{neighbours, denied_count, truncated}`); new web page `/entities/[id]/explore`; "Explore from here" link added to entity detail header. New Neo4j repo method `RelatedEntitiesByCoMention`. Backed by the canView pipeline from Phase 1.1.1, so denied neighbours never reach the response. Returns 503 when `NEO4J_URL` is unset.
+- **Native CP Roles catalog** (Phase 2.1.1): `/control-plane/roles` now renders a CP-native catalog UI directly (lists roles + presets, on-select shows detail / access preview / assignments JSON panes). Removed the `next.config.ts` rewrite to legacy `/admin/roles` and deleted `apps/web/src/app/(dash)/admin/roles/page.tsx`. The `/admin/roles → /control-plane/roles` 308 redirect remains for inbound legacy URLs.
+
+### Added — Phase 2 increments (2026-04-24)
+
+- **Worker `/ops/health` endpoints** for `cmd/jobworker` (`:9001` default) and `cmd/connectorworker` (`:9002` default). Returns DB/Redis liveness, per-Asynq-queue depth, and last-processed timestamp per task type — the canonical "is this worker stuck or just idle" signal. Public `/health` always returns liveness; `/ops/health` is bearer-gated outside `APP_ENV=local` using the same `OPS_AUTH_TOKEN` as the API. New package: [apps/api/internal/workerhealth](apps/api/internal/workerhealth) with unit tests for the per-task tracker.
+- **`/metrics` enrichment** with new collectors registered in the shared [internal/platform/metrics](apps/api/internal/platform/metrics) package: `knowledge_job_run_duration_seconds{job_type,status}` (recorded inline by `knowledge_jobs.runOrchestrator`), `connector_sync_duration_seconds{adapter_kind,status}` (recorded by `ingestion_connectors/app.SyncOrchestrator.RunSync`), on-scrape `postgres_pool_*` gauges from `pgxpool.Stat()`, and `asynq_queue_*{queue}` gauges via Asynq Inspector. The `httpserver` package now reuses the same registry instead of maintaining a private one.
+- **Effective-access UI** (Phase 2.1.6) at `/control-plane/users/[id]/access`: new `GET /users/:id/effective-access` API endpoint surfaces the 9-step `AccessEvaluator` trace (normally `json:"-"`) so operators can debug "why can't user X view entity Y?" Auth: identity admin or self.
+- **Job runs list** (Phase 2.1.3) at `/control-plane/jobs/runs`: new `GET /knowledge-jobs/runs?status&job_type&limit` endpoint with `JobRunListing` projection joining `job_runs` ↔ `knowledge_jobs` for the table view (no N+1 fetch).
+
+### Changed — Phase 2 increments
+
+- `cmd/jobworker` and `cmd/connectorworker` instrument all task handlers with `workerhealth.Tracker.Wrap(...)` so `/ops/health` carries a per-task-type "last successful completion" timestamp.
+- `internal/app/deps.go` registers `metrics.RegisterPoolStats(pool)` and `metrics.RegisterQueueDepth(inspector, queues)` once at startup; `/metrics` exposes them on every scrape.
+- `internal/secondbrain/prebrief.go`: removed unreachable `return nil` after the `for {}` polling loop (pre-existing `go vet` warning that blocked `make lint`).
+
+### Added — Phase 1 alignment (2026-04-24)
+
+- **AI Privacy Vault audit-events**: `vault.placeholder_stored`, `vault.placeholder_decrypted`, `vault.rehydration_applied` written to `audit_events` for every encrypt/decrypt/rehydrate (`apps/api/internal/ai/privacy/vault_store.go`, `rehydrate.go`).
+- **GraphRAG permission filter**: `graphExpandContextPieces` now filters expanded chunks through the same `canView` callback as seed entities — closing the access-before-retrieval leak where co-mention chunks could reach LLM context for denied entities ([apps/api/internal/retrieval_intelligence/service.go](apps/api/internal/retrieval_intelligence/service.go), regression test in `graph_expansion_permission_test.go`).
+- **API stability policy** ([docs/API_STABILITY.md](docs/API_STABILITY.md)) — declares v0.x breaking-change tolerance and v1.0 semver/`/v1/...` contract.
+- **OSS_V1_SCOPE.md "Optional modules"** section documenting Second Brain and GraphRAG as feature-flag-gated.
+- **Honest LIMITATIONS.md entries** for Decision UI, Project Memory, Setup wizard, CP native builders, Effective-access UI, connector webhooks.
+
+### Changed — Phase 1 alignment
+
+- **Production fail-closed for AI Privacy Vault**: `ValidateAPI` and `ValidateWorker` now require `AI_PRIVACY_VAULT_KEY` (≥32 bytes) and forbid `AI_PRIVACY_DEV_PLAINTEXT_STORE=1` when `APP_ENV=production` (`apps/api/internal/config/hardening.go`). Composition root in `internal/app/deps.go` panics on vault init failure in production.
+- **Permission-check pulled inside `retrieval_intelligence` façade**: `AskGlobal` and `AskEntity` no longer accept a `canView` callback parameter. The façade builds it internally via the centralized 9-step `AccessEvaluator`, so a new caller cannot accidentally omit the check (`apps/api/internal/retrieval_intelligence/service.go`).
+- **ADR-0012 (Second Brain)** promoted from Provisional to **Accepted** with feature-flag gating (`SECOND_BRAIN_PREBRIEF_TICK`, `TELEGRAM_BOT_TOKEN`).
+- **README highlight** clarifies self-hosted single-tenant positioning (NOT a multi-tenant SaaS).
+- **PRODUCTION_HARDENING.md** documents vault key requirement and audit-event coverage.
+- **Env-table single source of truth**: `DEPLOY_CHECKLIST.md` and `PRODUCTION_GO_LIVE_CHECKLIST.md` now defer to `.env.example` + `CONFIG_ENV.md` rather than maintain parallel tables.
+
+### Removed — Phase 1 alignment
+
+- **Orphan stub task handlers** `TaskAISummarize` and `TaskGovernanceFollowUp` (and their payload structs) — they were registered in `cmd/connectorworker` but never enqueued anywhere; the silent-success handler ate work that the API thought it had dispatched. If AI summarization is reintroduced later, it must come with a real implementation.
+- **Empty placeholder packages** `internal/platform_operations`, `internal/workflow_governance`, `internal/events` (each was a single `doc.go` line with no consumers).
+- **Stale duplicate doc** `docs/Config and environments.md` — replaced with one-line redirect to canonical `docs/CONFIG_ENV.md`.
+
+### Added
+
+- API startup **auto-bootstrap** when the database has zero domains: enabled by default for `APP_ENV=local` (override with `AUTO_BOOTSTRAP_INSTANCE=0`); staging/production require explicit `AUTO_BOOTSTRAP_INSTANCE=1` plus `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` ([docs/CONFIG_ENV.md](docs/CONFIG_ENV.md), `apps/api/internal/instancebootstrap`).
+- [docs/EXTERNAL_DEV_QUICKSTART.md](docs/EXTERNAL_DEV_QUICKSTART.md) and [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for OSS expectations; IA policy for canonical `(dash)/` vs `/app/*` redirects ([docs/INFORMATION_ARCHITECTURE_V1.md](docs/INFORMATION_ARCHITECTURE_V1.md)).
+- Merged legacy [docs/Domain model.md](docs/Domain%20model.md) narrative into [docs/DOMAIN_MODEL.md](docs/DOMAIN_MODEL.md); stub redirect file keeps old path alive.
+
+### Changed
+
+- Knowledge job orchestrator: unsupported `job_type` now returns an error instead of completing with no work ([apps/api/internal/knowledge_jobs/orchestrator.go](apps/api/internal/knowledge_jobs/orchestrator.go)).
+- [Connector Framework Specification.md](docs/Connector%20Framework%20Specification.md) §3.1 aligned with glossary (connector kind vs source feed instance).
+
+- MemPalace-inspired **governed** patterns (docs only where noted): scope-first retrieval and internal benchmark stance ([docs/AI_RETRIEVAL_GOVERNANCE.md](docs/AI_RETRIEVAL_GOVERNANCE.md)); Search/entity **explorer UX** spec ([docs/SEARCH_AND_QA_UX.md](docs/SEARCH_AND_QA_UX.md), [docs/INFORMATION_ARCHITECTURE_PRODUCT_V1.md](docs/INFORMATION_ARCHITECTURE_PRODUCT_V1.md)); self-hosted capability matrix ([docs/SELF_HOSTED.md](docs/SELF_HOSTED.md), [docs/CONFIG_ENV.md](docs/CONFIG_ENV.md)); transcript/mega-file splitting ([docs/INGESTION_AND_CONNECTORS.md](docs/INGESTION_AND_CONNECTORS.md) §12.7, [docs/KNOWLEDGE_JOBS.md](docs/KNOWLEDGE_JOBS.md) §25.4).
+- `GET /entities/:id/related` supports `depth=2` (bounded 2-hop `entity_links` with per-entity `view` checks). Entity detail UI: **Explore from here** rail using `related?limit=12&depth=2` ([docs/API_SURFACE_V1.md](docs/API_SURFACE_V1.md)).
+
+- Apache-2.0 `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`.
+- Self-hosted documentation: `docs/SELF_HOSTED.md`, `docs/OPERATIONS.md`, `docs/ARCHITECTURE_HOST.md`, `docs/CONFIG_ENV.md`.
+- User and administrator guides: `docs/USER_GUIDE_V1.md`, `docs/ADMIN_GUIDE_V1.md`.
+- Auth: `AUTH_MODE` (`development_header` | `session`), `SESSION_SECRET`, signed cookie `kl_session`.
+- `POST /instance/bootstrap`, `GET /instance/status` for first workspace setup.
+- `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`.
+- Invitations: `POST /invitations`, `GET /invitations/preview`, `POST /invitations/accept`.
+- `POST /users/import` (CSV, `invite` or `active` mode, optional `send_invites`).
+- `POST /domains`, `PATCH /domains/:id`.
+- `GET /settings/instance`, `POST /settings/test-mail`.
+- Web routes: `/login`, `/invite`, `/bootstrap`, `/settings`; home administrator checklist and nav links.
+- Migration `000014_auth_invitations` (`password_hash`, `user_invitations`).
+- CORS credentials and `CORS_ALLOW_ORIGINS`; `NEXT_PUBLIC_USE_DEV_HEADER` for pilot header mode.
+
+## [0.1.0] - 2026-04-21
+
+Documentation and operator tooling for **production cutover** and **open-source hygiene** (no breaking API contract change in this tag).
+
+### Added
+
+- Session-based operator smoke: [`scripts/smoke-session.sh`](scripts/smoke-session.sh) (documented in [docs/STAGING_SMOKE_TEST.md](docs/STAGING_SMOKE_TEST.md)); production cutover quick ref [docs/PRODUCTION_CUTOVER_QUICKREF.md](docs/PRODUCTION_CUTOVER_QUICKREF.md); infra inventory [docs/INFRA_PRODUCTION_REFERENCE.md](docs/INFRA_PRODUCTION_REFERENCE.md).
+- Release process [docs/RELEASING.md](docs/RELEASING.md); pre-push heuristic [`scripts/repo-sanity-check.sh`](scripts/repo-sanity-check.sh); [NOTICE](NOTICE), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md); SLO starter [docs/SLO_AND_ALERTING_TEMPLATE.md](docs/SLO_AND_ALERTING_TEMPLATE.md).

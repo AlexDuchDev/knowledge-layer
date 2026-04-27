@@ -1,0 +1,20 @@
+# Build: docker build -f Dockerfile.api -t knowledge-layer-api .
+FROM golang:1.22-alpine AS build
+WORKDIR /src
+COPY apps/api/go.mod apps/api/go.sum ./apps/api/
+WORKDIR /src/apps/api
+RUN go mod download
+COPY apps/api/ ./
+RUN CGO_ENABLED=0 go build -o /out/knowledge-api ./cmd/api && \
+    CGO_ENABLED=0 go build -o /out/knowledge-jobworker ./cmd/jobworker && \
+    CGO_ENABLED=0 go build -o /out/knowledge-connectorworker ./cmd/connectorworker
+
+FROM alpine:3.20
+RUN adduser -D -u 65532 appuser
+USER appuser
+WORKDIR /app
+COPY --from=build /out/knowledge-api .
+COPY --from=build /out/knowledge-jobworker .
+COPY --from=build /out/knowledge-connectorworker .
+EXPOSE 8080
+ENTRYPOINT ["/app/knowledge-api"]

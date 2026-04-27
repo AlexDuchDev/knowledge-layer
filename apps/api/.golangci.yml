@@ -1,0 +1,62 @@
+# golangci-lint config for the Knowledge Layer Go backend.
+#
+# Run locally:
+#   cd apps/api
+#   golangci-lint run ./...
+#
+# `make lint` runs `go vet` only — golangci-lint is an optional contributor tool
+# whose rules ship as documentation enforcement (depguard below). Wiring it into
+# CI is a Phase 4 follow-up.
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - govet         # also run by `make lint`
+    - depguard      # blocks unsanctioned imports — see linters-settings below
+    - ineffassign   # catches `x := …` immediately reassigned without read
+    - misspell      # english spell-check inside identifiers + comments
+    - unused        # dead symbols, opt-in
+    - errcheck      # explicit `_ = err` ack required for ignored errors
+
+linters-settings:
+  depguard:
+    rules:
+      # LLM clients (OpenAI / OpenRouter) MUST route through ai/privacy.PrivacyGateway
+      # so sanitization, vault encryption, and rehydration apply. The list of allowed
+      # importers below is the full set of legitimate constructors + composition roots.
+      # Adding a new entry needs a Phase 4 review — see internal/README.md "Things to avoid".
+      llm-clients-restricted:
+        list-mode: lax
+        files:
+          - "$all"
+          - "!**/internal/ai/privacy/**"        # gateway itself
+          - "!**/internal/qa/**"                # synthesis through gateway
+          - "!**/internal/embeddings/**"        # ADR-0013: embeddings deliberately outside vault
+          - "!**/internal/graphrag/extract/**"  # legacy: graph extraction (Phase 4 follow-up)
+          - "!**/internal/app/**"               # composition root
+          - "!**/internal/httpserver/**"        # constructs client + hands to gateway
+          - "!**/cmd/connectorworker/**"        # constructs embedding client
+          - "!**/cmd/api/**"                    # composition (in case main.go ever needs it)
+        deny:
+          - pkg: github.com/knowledgelayer/api/internal/llm
+            desc: |
+              Direct imports of internal/llm are restricted. Route LLM calls through
+              ai/privacy.PrivacyGateway.InvokeOpenAI so sanitization + vault encryption
+              + rehydration apply. If you need a new exception, document it in
+              apps/api/internal/README.md and update this list.
+
+  misspell:
+    locale: US
+
+issues:
+  exclude-dirs:
+    - internal/db/migrations
+  exclude-rules:
+    # Tests routinely ignore returns from Cleanup helpers; relax errcheck there.
+    - path: _test\.go
+      linters:
+        - errcheck

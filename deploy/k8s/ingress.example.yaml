@@ -1,0 +1,97 @@
+# Example ingress — adapt to your controller (nginx, Traefik, GKE, ALB, …).
+#
+# Routing strategy: serve the Web app from /, route every API endpoint under explicit prefixes
+# to the API Service. The list mirrors the route mounts in apps/api/internal/httpserver/routes.go.
+# An alternative is to host the API on a sub-domain (api.kl.example.com) — simpler routing,
+# but cookies need careful Domain= handling for cross-host session auth.
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: knowledge-layer
+  namespace: knowledge-layer
+  annotations:
+    # Example annotations for ingress-nginx; remove or replace for your controller.
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - kl.example.com
+      secretName: knowledge-layer-tls
+  rules:
+    - host: kl.example.com
+      http:
+        paths:
+          # API surface — every prefix the Fiber router mounts.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: knowledge-api
+                port:
+                  number: 80
+          - path: /ask
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /search
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /entities
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /domains
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /users
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /roles
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /scenarios
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /knowledge-jobs
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /governance
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /review-tasks
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /source-feeds
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /connectors
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /audit-events
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /auth
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /instance
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /health
+            pathType: Exact
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /ops
+            pathType: Prefix
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          - path: /metrics
+            pathType: Exact
+            backend: { service: { name: knowledge-api, port: { number: 80 } } }
+          # Web app — catch-all default.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: knowledge-web
+                port:
+                  number: 80

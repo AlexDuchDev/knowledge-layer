@@ -1,0 +1,33 @@
+DELETE FROM roles WHERE id IN (
+    'c1000001-0000-4000-8000-000000000001',
+    'c1000001-0000-4000-8000-000000000002',
+    'c1000001-0000-4000-8000-000000000003',
+    'c1000001-0000-4000-8000-000000000004',
+    'c1000001-0000-4000-8000-000000000005',
+    'c1000001-0000-4000-8000-000000000006',
+    'c1000001-0000-4000-8000-000000000007',
+    'c1000001-0000-4000-8000-000000000008'
+);
+
+DROP INDEX IF EXISTS user_role_bindings_user_role_scope_unique;
+
+DROP TABLE IF EXISTS role_governance_permissions;
+DROP TABLE IF EXISTS role_job_permissions;
+DROP TABLE IF EXISTS role_dashboard_bindings;
+DROP TABLE IF EXISTS role_scenario_bindings;
+DROP TABLE IF EXISTS role_source_scope_bindings;
+DROP TABLE IF EXISTS role_entity_type_bindings;
+DROP TABLE IF EXISTS role_domain_bindings;
+
+DROP INDEX IF EXISTS idx_roles_preset_key;
+DROP INDEX IF EXISTS idx_roles_code;
+
+ALTER TABLE roles
+    DROP COLUMN IF EXISTS is_system,
+    DROP COLUMN IF EXISTS cloned_from_role_id,
+    DROP COLUMN IF EXISTS preset_key,
+    DROP COLUMN IF EXISTS is_preset,
+    DROP COLUMN IF EXISTS scope_model,
+    DROP COLUMN IF EXISTS active,
+    DROP COLUMN IF EXISTS category,
+    DROP COLUMN IF EXISTS code;
