@@ -181,10 +181,14 @@ func (s *Service) CreateSourceFeed(ctx context.Context, in CreateSourceFeedInput
 	}
 	id := uuid.New()
 	sourceURI := in.ExternalRef
+	// 17 columns = 15 placeholders + 2 literals ('draft','idle' for status, sync_status).
+	// Earlier draft had $1..$16 (16 placeholders) + 2 literals = 18 expressions vs 17 columns,
+	// which PG rejected with "INSERT has more expressions than target columns" (SQLSTATE 42601).
+	// The missing 16th bind also meant the row would never insert — surfaced during R3 RC validation.
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO source_feeds (id, connector_id, source_uri, external_ref, display_name, owner_id, owner_team_id, domain_id, sensitivity_level,
 			allowed_job_types_json, ingestion_mode, sync_mode, knowledge_scope, notes, connector_config_json, status, sync_status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'draft','idle')`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'draft','idle')`,
 		id, in.ConnectorID, sourceURI, in.ExternalRef, in.DisplayName, in.OwnerID, in.OwnerTeamID, in.DomainID, in.SensitivityLevel,
 		in.AllowedJobTypesJSON, in.IngestionMode, in.SyncMode, in.KnowledgeScope, in.Notes, in.ConnectorConfigJSON)
 	if err != nil {
