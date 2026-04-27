@@ -23,9 +23,12 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  # Matches the manifests in deploy/k8s/*-deployment.yaml — keep in sync if you rename.
-  API_IMAGE_NAME: ${{ github.repository_owner }}/knowledge-layer-api
-  WEB_IMAGE_NAME: ${{ github.repository_owner }}/knowledge-layer-web
+  # Image-name suffix only. The full GHCR path is composed at use-time from a
+  # **lowercased** ${GITHUB_REPOSITORY_OWNER}, because GHCR rejects uppercase
+  # repository names and ${{ github.repository_owner }} preserves the casing of
+  # the GitHub login. Matches the manifests in deploy/k8s/*-deployment.yaml.
+  API_IMAGE_NAME: knowledge-layer-api
+  WEB_IMAGE_NAME: knowledge-layer-web
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -100,7 +103,8 @@ jobs:
         id: tags
         run: |
           TAG="${GITHUB_REF_NAME}"
-          IMAGE="${{ env.REGISTRY }}/${{ env.API_IMAGE_NAME }}"
+          OWNER_LC="${GITHUB_REPOSITORY_OWNER,,}"
+          IMAGE="${{ env.REGISTRY }}/${OWNER_LC}/${{ env.API_IMAGE_NAME }}"
           OUT="${IMAGE}:${TAG}"
           # Promote to :latest only when this is a stable release (no pre-release suffix).
           if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -148,7 +152,8 @@ jobs:
         id: tags
         run: |
           TAG="${GITHUB_REF_NAME}"
-          IMAGE="${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}"
+          OWNER_LC="${GITHUB_REPOSITORY_OWNER,,}"
+          IMAGE="${{ env.REGISTRY }}/${OWNER_LC}/${{ env.WEB_IMAGE_NAME }}"
           OUT="${IMAGE}:${TAG}"
           if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             OUT="${OUT},${IMAGE}:latest"
@@ -200,12 +205,13 @@ jobs:
               capture { print }
             ' CHANGELOG.md > "$NOTES_FILE"
           else
+            OWNER_LC="${GITHUB_REPOSITORY_OWNER,,}"
             cat <<EOF > "$NOTES_FILE"
           See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${GITHUB_SHA}/CHANGELOG.md) — no section matched the tag automatically.
 
           Container images:
-          - \`ghcr.io/${{ env.API_IMAGE_NAME }}:${TAG}\`
-          - \`ghcr.io/${{ env.WEB_IMAGE_NAME }}:${TAG}\`
+          - \`ghcr.io/${OWNER_LC}/${{ env.API_IMAGE_NAME }}:${TAG}\`
+          - \`ghcr.io/${OWNER_LC}/${{ env.WEB_IMAGE_NAME }}:${TAG}\`
           EOF
           fi
           {
