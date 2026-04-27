@@ -1750,14 +1750,9 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 		// Phase 4.2.2: adapter-level validation at config-save. Build a candidate
 		// feed shape and reject the request if the adapter rejects the config —
 		// surfaces issues immediately rather than at the first sync attempt.
-		candidate := &ingestion_connectors.SourceFeed{
-			ConnectorID:         in.ConnectorID,
-			DomainID:            in.DomainID,
-			SensitivityLevel:    in.SensitivityLevel,
-			KnowledgeScope:      in.KnowledgeScope,
-			ConnectorConfigJSON: in.ConnectorConfigJSON,
-		}
-		if err := d.Ingestion.ValidateSourceFeed(c.Context(), candidate); err != nil {
+		// Use CandidateSourceFeed() so every field reaches the adapter (rc2 had a
+		// drop-bug here that broke filesystem feeds because ExternalRef was missed).
+		if err := d.Ingestion.ValidateSourceFeed(c.Context(), in.CandidateSourceFeed()); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		sf, err := d.Ingestion.CreateSourceFeed(c.Context(), in)
@@ -1827,14 +1822,9 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 		if err := requireManageSourceFeedNewInDomain(c, d, principal, in.DomainID, in.SensitivityLevel); err != nil {
 			return err
 		}
-		candidate := &ingestion_connectors.SourceFeed{
-			ConnectorID:         in.ConnectorID,
-			DomainID:            in.DomainID,
-			SensitivityLevel:    in.SensitivityLevel,
-			KnowledgeScope:      in.KnowledgeScope,
-			ConnectorConfigJSON: in.ConnectorConfigJSON,
-		}
-		if err := d.Ingestion.ValidateSourceFeed(c.Context(), candidate); err != nil {
+		// Same candidate construction as POST /source-feeds — must mirror every
+		// input field an adapter might inspect. Use CandidateSourceFeed().
+		if err := d.Ingestion.ValidateSourceFeed(c.Context(), in.CandidateSourceFeed()); err != nil {
 			return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 				"valid": false,
 				"error": err.Error(),

@@ -1,0 +1,37 @@
+# RC validation override — pulls published GHCR images instead of rebuilding from source.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.rc.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.rc.yml up -d
+#
+# Defaults to ghcr.io/<owner>/knowledge-layer-{api,web}:<tag>. Override via env:
+#   GHCR_OWNER=alexduchdev RC_TAG=v0.1.0-rc2 docker compose -f docker-compose.yml -f docker-compose.rc.yml ...
+#
+# When the canonical repo is private (current state pre-launch), authenticate first:
+#   echo "$(gh auth token)" | docker login ghcr.io -u <github-login> --password-stdin
+#
+# This file is the substrate for docs/RC_VALIDATION.md.
+
+services:
+  api:
+    image: ghcr.io/${GHCR_OWNER:-alexduchdev}/knowledge-layer-api:${RC_TAG:-v0.1.0-rc2}
+    build: !reset null
+    pull_policy: always
+
+  jobworker:
+    image: ghcr.io/${GHCR_OWNER:-alexduchdev}/knowledge-layer-api:${RC_TAG:-v0.1.0-rc2}
+    build: !reset null
+    pull_policy: always
+    # Override the entrypoint to the worker binary baked into the API image.
+    entrypoint: ["/app/knowledge-jobworker"]
+
+  connectorworker:
+    image: ghcr.io/${GHCR_OWNER:-alexduchdev}/knowledge-layer-api:${RC_TAG:-v0.1.0-rc2}
+    build: !reset null
+    pull_policy: always
+    entrypoint: ["/app/knowledge-connectorworker"]
+
+  web:
+    image: ghcr.io/${GHCR_OWNER:-alexduchdev}/knowledge-layer-web:${RC_TAG:-v0.1.0-rc2}
+    build: !reset null
+    pull_policy: always

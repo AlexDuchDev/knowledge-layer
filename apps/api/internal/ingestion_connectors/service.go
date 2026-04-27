@@ -135,6 +135,31 @@ type CreateSourceFeedInput struct {
 	ConnectorConfigJSON json.RawMessage `json:"connector_config_json"`
 }
 
+// CandidateSourceFeed builds the in-memory SourceFeed shape adapter validators
+// see at config-save time (POST /source-feeds and POST /source-feeds/validate).
+// Adapters such as filesystem read fields like ExternalRef directly, so the
+// candidate must mirror **every** input field that an adapter could legitimately
+// inspect. Earlier route-level constructions silently dropped ExternalRef, which
+// made the filesystem and similar no-credentials connectors unusable from the UI.
+// Centralising the conversion here prevents that drift class.
+func (in CreateSourceFeedInput) CandidateSourceFeed() *SourceFeed {
+	return &SourceFeed{
+		ConnectorID:         in.ConnectorID,
+		DisplayName:         in.DisplayName,
+		OwnerID:             in.OwnerID,
+		OwnerTeamID:         in.OwnerTeamID,
+		DomainID:            in.DomainID,
+		SensitivityLevel:    in.SensitivityLevel,
+		AllowedJobTypesJSON: in.AllowedJobTypesJSON,
+		IngestionMode:       in.IngestionMode,
+		SyncMode:            in.SyncMode,
+		ExternalRef:         in.ExternalRef,
+		KnowledgeScope:      in.KnowledgeScope,
+		Notes:               in.Notes,
+		ConnectorConfigJSON: in.ConnectorConfigJSON,
+	}
+}
+
 func (s *Service) CreateSourceFeed(ctx context.Context, in CreateSourceFeedInput) (*SourceFeed, error) {
 	if len(in.AllowedJobTypesJSON) == 0 {
 		in.AllowedJobTypesJSON = []byte("[]")
