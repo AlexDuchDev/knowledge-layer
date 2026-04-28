@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-04-28
+
+Patch release covering the open Dependabot alerts on the v0.2.0 lockfiles plus a release-CI cosmetic. No public API or behaviour changes; backward-compatible with v0.2.0.
+
+### Security
+
+Closes 14 open Dependabot alerts (4 critical / 3 high / 6 moderate / 1 low) in the lockfiles by bumping vulnerable direct + indirect dependencies. None of the advisories were known to be exploitable in this codebase's call graph, but staying ahead of advisories is the contract.
+
+- **`golang.org/x/crypto` → v0.46.0** — fixes CVE-2024-45337 (critical, ServerConfig.PublicKeyCallback authorization bypass), CVE-2025-22869 (high, ssh DoS), CVE-2025-47914 + CVE-2025-58181 (medium, agent panic + ssh memory).
+- **`google.golang.org/grpc` → v1.79.3** — fixes CVE-2026-33186 (critical, authorization bypass via missing leading slash in `:path`).
+- **`github.com/jackc/pgx/v5` → v5.9.2** — fixes CVE-2026-33816 (critical, memory-safety) and GHSA-j88v-2chj-qfwx (low, SQL-injection via dollar-quoted-string placeholder confusion).
+- **`github.com/gofiber/fiber/v2` → v2.52.12** — fixes CVE-2025-66630 (critical, predictable UUIDv4 fallback), CVE-2025-54801 (high, BodyParser crash on unvalidated large slice index), CVE-2026-25882 (medium, Route Parameter Overflow DoS).
+- **`golang.org/x/oauth2` → v0.34.0** — fixes CVE-2025-22868 (high, improper validation of syntactic correctness).
+- **`golang.org/x/net` → v0.48.0** — fixes CVE-2025-22870 + CVE-2025-22872 (medium, IPv6 zone-id proxy bypass + XSS).
+- **`postcss` → ^8.5.12** in `apps/web` (top-level + `overrides` to force the nested `next/node_modules/postcss`) — fixes GHSA-qx2v-qp2m-jg93 (medium, XSS via unescaped `</style>` in CSS Stringify).
+
+### Changed
+
+- **Go toolchain → 1.25.0** in `apps/api/go.mod` (forced by the upgraded modules above). [`Dockerfile.api`](Dockerfile.api) now uses `golang:1.25-alpine`. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) reads the Go version from `apps/api/go.mod` via `go-version-file` instead of hard-coding `1.22.x`, so future toolchain bumps are picked up automatically by both CI gates.
+
+### Fixed
+
+- **Release CI release-notes extraction** — [`.github/workflows/release.yml`](.github/workflows/release.yml) was matching `## [vX.Y.Z]` against CHANGELOG headings written as `## [X.Y.Z]`, so the v0.2.0 release page fell through to the "no section matched" fallback. Strip the leading `v` from `GITHUB_REF_NAME` before grepping so future releases pick up the right CHANGELOG section automatically.
+
 ## [0.2.0] — 2026-04-27
 
 > First **publicly published artifacts** on GHCR. The earlier `[0.1.0]` entry below documents an internal documentation/tooling milestone from 2026-04-21 — no images were published for that tag. v0.2.0 is therefore the first release operators outside the original dev environment can pull and run end-to-end. Four `-rcN` candidates surfaced and fixed install-time bugs (GHCR uppercase rejection, ExternalRef drop in source-feed validation, INSERT placeholder count mismatch in CreateSourceFeed) before this stable cut.

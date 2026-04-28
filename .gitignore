@@ -14,6 +14,7 @@ coverage/
 *.exe
 *.test
 *.out
+*.tsbuildinfo
 vendor/
 
 # Local Docker bind-mount data (postgres, redis, opensearch)

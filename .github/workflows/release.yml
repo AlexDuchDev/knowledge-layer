@@ -196,10 +196,15 @@ jobs:
         id: notes
         run: |
           TAG="${GITHUB_REF_NAME}"
-          # Try to find a `## [vX.Y.Z]` heading in CHANGELOG.md and copy until the next `## [`.
+          # CHANGELOG headings follow Keep-a-Changelog convention `## [X.Y.Z]`
+          # while git tags are `vX.Y.Z`. Strip the leading `v` so the heading
+          # match works regardless of which form CI receives. v0.2.0 release
+          # body fell through to the fallback because of this mismatch.
+          TAG_NO_V="${TAG#v}"
+          # Try to find a `## [X.Y.Z]` heading in CHANGELOG.md and copy until the next `## [`.
           NOTES_FILE="$(mktemp)"
-          if grep -q "^## \[$TAG\]" CHANGELOG.md; then
-            awk -v tag="$TAG" '
+          if grep -q "^## \[$TAG_NO_V\]" CHANGELOG.md; then
+            awk -v tag="$TAG_NO_V" '
               $0 ~ "^## \\[" tag "\\]" { capture=1; next }
               capture && /^## \[/ { capture=0 }
               capture { print }
