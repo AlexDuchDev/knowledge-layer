@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-04-28
+
+Single-fix patch closing the last open Dependabot alert from the v0.2.2 security pass. Brings the repo's open advisory count to zero. Backward-compatible with v0.2.2.
+
+### Security
+
+- **`go.opentelemetry.io/otel` v1.39.0 → v1.41.0** (transitive bump including `otel/metric` and `otel/trace`) — fixes CVE-2026-29181 (high, multi-value `baggage` header extraction causes excessive allocations / remote DoS amplification). Practical exploit risk in this codebase is low — the OTEL pipeline is operator-internal and `/metrics` is bearer-gated outside `APP_ENV=local` per [PRODUCTION_HARDENING.md](docs/PRODUCTION_HARDENING.md) — but staying on patched releases is the contract.
+
 ## [0.2.2] — 2026-04-28
 
 Re-cut of [0.2.1] after the Web image build hung for 2 hours on `linux/arm64` QEMU emulation during `npm ci`. v0.2.2 ships every change intended for v0.2.1 (Dependabot security updates + release-notes fix) plus the build-system change that unblocked the Web publish. The v0.2.1 git tag exists but never produced a stable Web image or a GitHub Release; the API image at `ghcr.io/.../knowledge-layer-api:v0.2.1` is the partial output of that cancelled run and operators should pull `:v0.2.2` or `:latest` instead.
