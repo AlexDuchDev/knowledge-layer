@@ -164,7 +164,14 @@ jobs:
         with:
           context: .
           file: Dockerfile.web
-          platforms: linux/amd64,linux/arm64
+          # Web image is amd64-only because the Next.js build runs node + native
+          # postinstall scripts inside the buildx step. Under linux/arm64 QEMU
+          # emulation, `npm ci` consistently hangs — v0.2.1's first attempt
+          # ran for 2 hours on arm64 npm ci before the runner gave up.
+          # Operators running arm64 hosts (Graviton, Apple Silicon) can build
+          # from source — see CONTRIBUTING.md. The API image remains multi-arch
+          # because Go cross-compiles natively without emulation.
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           # Same-host pattern: ingress proxies API + Web from one origin.

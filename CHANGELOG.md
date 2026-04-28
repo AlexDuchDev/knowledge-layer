@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.1] — 2026-04-28
+## [0.2.2] — 2026-04-28
 
-Patch release covering the open Dependabot alerts on the v0.2.0 lockfiles plus a release-CI cosmetic. No public API or behaviour changes; backward-compatible with v0.2.0.
+Re-cut of [0.2.1] after the Web image build hung for 2 hours on `linux/arm64` QEMU emulation during `npm ci`. v0.2.2 ships every change intended for v0.2.1 (Dependabot security updates + release-notes fix) plus the build-system change that unblocked the Web publish. The v0.2.1 git tag exists but never produced a stable Web image or a GitHub Release; the API image at `ghcr.io/.../knowledge-layer-api:v0.2.1` is the partial output of that cancelled run and operators should pull `:v0.2.2` or `:latest` instead.
+
+### Changed
+
+- **Web image is now `linux/amd64` only.** [`.github/workflows/release.yml`](.github/workflows/release.yml) no longer asks buildx to also produce `linux/arm64` for the Web image. The Next.js `npm ci` step under arm64 QEMU emulation hangs (one of the postinstall scripts loops indefinitely), even though the same step takes <1 minute on amd64. The API image stays multi-arch — Go cross-compiles natively without emulation, so amd64 + arm64 API images remain available. Operators on arm64 hosts (Graviton, Apple Silicon) who need the Web image should build from source per [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+The remainder of this entry is identical to the [0.2.1] section below; consolidated here for the canonical release notes.
 
 ### Security
 
@@ -23,13 +29,19 @@ Closes 14 open Dependabot alerts (4 critical / 3 high / 6 moderate / 1 low) in t
 - **`golang.org/x/net` → v0.48.0** — fixes CVE-2025-22870 + CVE-2025-22872 (medium, IPv6 zone-id proxy bypass + XSS).
 - **`postcss` → ^8.5.12** in `apps/web` (top-level + `overrides` to force the nested `next/node_modules/postcss`) — fixes GHSA-qx2v-qp2m-jg93 (medium, XSS via unescaped `</style>` in CSS Stringify).
 
-### Changed
+### Changed (toolchain side-effects)
 
 - **Go toolchain → 1.25.0** in `apps/api/go.mod` (forced by the upgraded modules above). [`Dockerfile.api`](Dockerfile.api) now uses `golang:1.25-alpine`. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) reads the Go version from `apps/api/go.mod` via `go-version-file` instead of hard-coding `1.22.x`, so future toolchain bumps are picked up automatically by both CI gates.
 
 ### Fixed
 
 - **Release CI release-notes extraction** — [`.github/workflows/release.yml`](.github/workflows/release.yml) was matching `## [vX.Y.Z]` against CHANGELOG headings written as `## [X.Y.Z]`, so the v0.2.0 release page fell through to the "no section matched" fallback. Strip the leading `v` from `GITHUB_REF_NAME` before grepping so future releases pick up the right CHANGELOG section automatically.
+
+## [0.2.1] — 2026-04-28 (abandoned — Web arm64 build hang)
+
+Tag pushed at commit `10d55af` but never produced a complete release: the `linux/arm64` Web image build hung in `npm ci` for two hours under QEMU emulation. Workflow [run 25038554573](https://github.com/AlexDuchDev/knowledge-layer/actions/runs/25038554573) was cancelled. **v0.2.2 supersedes** with the platforms fix and ships every intended change above.
+
+The v0.2.1 git tag is preserved for audit trail. **Do not** pull `ghcr.io/<owner>/knowledge-layer-web:v0.2.1` — it does not exist. The orphan `ghcr.io/<owner>/knowledge-layer-api:v0.2.1` image (a partial side-effect of the cancelled run) carries the v0.2.2 security bumps but is not paired with a Web image; use `:v0.2.2` or `:latest` instead.
 
 ## [0.2.0] — 2026-04-27
 
