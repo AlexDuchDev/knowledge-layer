@@ -151,6 +151,16 @@ func (s *Service) RetrieveContext(ctx context.Context, principal uuid.UUID, ques
 				if len(pieces) >= maxPieces {
 					break
 				}
+				// v0.3.0: skip normalized_record-rooted candidates — downstream
+				// Ask citation flow assumes EntityID resolves via entities.Get.
+				// Embeddings + retrieval-via-SemanticNear DO surface them
+				// (chunks are built and embedded by the backfill loop) so admin
+				// tooling and pure-vector queries see them; v0.3.1 wires them
+				// through to Ask with synthesized citations from the source
+				// normalized_record (channel + timestamp + author_ref).
+				if c.EntityID == uuid.Nil {
+					continue
+				}
 				pieces = append(pieces, RankedContextPiece{
 					EntityID:       c.EntityID,
 					ChunkID:        c.ChunkID,
@@ -184,6 +194,12 @@ func (s *Service) RetrieveContext(ctx context.Context, principal uuid.UUID, ques
 		bestSem := map[uuid.UUID]float64{}
 		bestCand := map[uuid.UUID]embeddings.Candidate{}
 		for _, c := range sem {
+			// v0.3.0: same caveat as semantic_only — drop nil-EntityID
+			// (normalized_record-rooted) candidates from the hybrid fusion.
+			// They're retrievable but not yet wired into Ask citations.
+			if c.EntityID == uuid.Nil {
+				continue
+			}
 			sim := SemanticSimilarity(c.Distance)
 			if prev, ok := bestSem[c.EntityID]; !ok || sim > prev {
 				bestSem[c.EntityID] = sim

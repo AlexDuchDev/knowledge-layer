@@ -47,12 +47,31 @@ type SourceFeed struct {
 	ConnectorConfigJSON json.RawMessage `json:"connector_config_json,omitempty"`
 }
 
+// OnNormalizedRecordPersistedHook runs after a successful normalized_record
+// insert (best-effort; errors are logged but never block ingestion). Set by
+// the composition root to wire the chunks rebuild + embedding enqueue.
+type OnNormalizedRecordPersistedHook func(ctx context.Context, normID uuid.UUID) error
+
 type Service struct {
-	pool       *pgxpool.Pool
-	HTTP       *http.Client
-	Registry   *Registry
-	gmailOAuth *oauth2.Config
-	m365OAuth  *oauth2.Config
+	pool                 *pgxpool.Pool
+	HTTP                 *http.Client
+	Registry             *Registry
+	gmailOAuth           *oauth2.Config
+	m365OAuth            *oauth2.Config
+	onNormalizedRecord   OnNormalizedRecordPersistedHook
+}
+
+// SetOnNormalizedRecordPersisted wires the chunks-rebuild hook fired after
+// every fresh normalized_record insert.
+func (s *Service) SetOnNormalizedRecordPersisted(h OnNormalizedRecordPersistedHook) {
+	s.onNormalizedRecord = h
+}
+
+func (s *Service) fireOnNormalizedRecordPersisted(ctx context.Context, normID uuid.UUID) {
+	if s == nil || s.onNormalizedRecord == nil {
+		return
+	}
+	_ = s.onNormalizedRecord(ctx, normID)
 }
 
 // ConfigureConnectorOAuth wires optional OAuth2 clients for Gmail / Microsoft Graph token refresh.

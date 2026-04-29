@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-29
+
+Closes the chunking gap: before this release, the entire ingestion pipeline (`raw_artifacts → normalized_records → entities → chunks → embeddings`) only chunked content that became an entity, and **only Google Drive documents had a normalized-record-to-entity mapper**. All other record types — chat messages (Slack / Telegram / Mattermost / Teams), meeting transcripts (Fireflies / Google Meet), email (Gmail / M365), work items (Linear / Jira / Asana / Trello), support conversations (Zendesk / Intercom / HubSpot), Confluence / Notion docs, calendar events — sat in `normalized_records` indefinitely, never chunked, never embedded, invisible to retrieval. A live audit on a v0.2.x stack showed 16 normalized records resulting in **0 entities and 0 chunks**.
+
+v0.3.0 decouples chunks from entities so any record_type can be chunked directly from its normalized-record payload. After this release, `/health`-equivalent live verification on a fresh ingestion stack shows `8 normalized records → 8 chunks → 8 chunks_rebuilt_at stamps` within ~8 seconds of the connectorworker starting.
+
+### Added
+
+- **Polymorphic chunk source** (migration 000041, [`internal/chunks/service.go`](apps/api/internal/chunks/service.go)). The `chunks` table now carries `normalized_record_id UUID NULL` alongside the existing `entity_id UUID NULL`, with a `chunks_exactly_one_source_chk` constraint guaranteeing every row has exactly one parent. `source_type` discriminates: `entity_body` (legacy) vs `normalized_record` (new). New per-record-type extraction registry in [`internal/chunks/extract.go`](apps/api/internal/chunks/extract.go) maps 14+ record types (chat, docs, meeting, calendar, email, work_item, support_ticket, etc.) to record-relevant text; unknown record_types return cleanly without inserting noise.
+- **Periodic backfill loop** in [`cmd/connectorworker/main.go`](apps/api/cmd/connectorworker/main.go). Runs `chunks.RebuildPendingNormalizedRecords` every 30 s (and once on startup). Drains up to 100 normalized_records with `chunks_rebuilt_at IS NULL` per tick; logs `chunk backfill processed=N failures=M`. Decouples the chunks-rebuild contract from the 24+ scattered `INSERT INTO normalized_records ...` call sites in connector adapters — new connectors land without remembering to fire any hook.
+- **Synchronous fast path** via `Service.PersistNormalizedRecord(...)` in [`internal/ingestion_connectors/artifact_worker.go`](apps/api/internal/ingestion_connectors/artifact_worker.go). When an adapter routes through this helper (currently the typed-artifact-worker path), the chunks-rebuild + embedding-enqueue fires synchronously inside the same goroutine. The wider connector-adapter set falls back to the periodic backfill at 30 s lag.
+- **Embedding retrieval UNION query** in [`internal/embeddings/service.go`](apps/api/internal/embeddings/service.go). `Candidate` gains `NormalizedRecordID uuid.UUID`; the SQL behind `SemanticNear` now UNIONs entity-rooted and normalized-record-rooted chunks with appropriate domain access (`source_feeds.domain_id` for the latter) and synthesized governance defaults (`pre_approved` / `mirrored_authority` / `published` / `fresh`) for raw-source candidates.
+- **Tests**: `TestRebuildNormalizedRecordChunks_extractsTextAndPersists` exercises the full DB-shape (FK to `normalized_records`, NULL `entity_id`, `source_type='normalized_record'`, text round-trip) against a real Postgres. `TestExtractTextFromNormalizedRecord_perTypeRegistry` covers 8 record types and the unknown-type fall-through. Adding a new connector record_type without a chunk extractor will fail the latter loudly.
+
+### Changed
+
+- **`embeddings.Candidate.EntityID` is now optional.** Existing callers that always read `c.EntityID.String()` will get the zero UUID for normalized-record candidates. v0.3.0 conservatively *filters* `nil`-EntityID candidates out of the Ask path in [`internal/retrieval/service.go`](apps/api/internal/retrieval/service.go) (both `semantic_only` and `hybrid` modes) so /ask responses don't break — they just don't yet cite normalized-record fragments. Pure-embedding callers (`SemanticNear`) DO see them. v0.3.1 wires the synthesized citations through Ask.
+- `chunks.Service.OnNormalizedRecordPersisted` stamps `normalized_records.chunks_rebuilt_at = now()` after a successful rebuild so the backfill loop never reprocesses the same row.
+
+### Migration notes
+
+- Migration 000041 is **non-destructive**. Pre-existing entity-rooted chunks keep their shape (`entity_id` non-null, `normalized_record_id` NULL, `source_type='entity_body'`). The CHECK constraint applies to new rows only.
+- After upgrade, the connectorworker's first tick (≤30 s) backfills any normalized_records inserted before the upgrade. Live-verified: 8 records → 8 chunks in 8 s on a quad-core dev box.
+- Rollback (000041 down) drops the `normalized_record_id` column, which cascades to embeddings — operators rolling back must regenerate embeddings.
+
+### Known follow-ups (v0.3.1 candidates)
+
+- **Ask citations for normalized-record fragments** — synthesize a virtual citation (channel + timestamp + author_ref) per record_type so /ask can quote chat / meeting fragments without an entity.
+- **OpenSearch indexing for normalized_records** — `/search` keyword-only retrieval today still indexes only entities. Mirroring the chunks change at the OpenSearch layer is the next pass.
+- **24+ inline `INSERT INTO normalized_records` call sites** still bypass the synchronous hook. They land via the periodic backfill within 30 s. Refactoring them to route through `Service.PersistNormalizedRecord` is a mechanical chore that closes the lag window.
+
 ## [0.2.3] — 2026-04-28
 
 Single-fix patch closing the last open Dependabot alert from the v0.2.2 security pass. Brings the repo's open advisory count to zero. Backward-compatible with v0.2.2.

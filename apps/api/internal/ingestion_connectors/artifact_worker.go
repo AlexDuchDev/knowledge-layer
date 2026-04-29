@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/families/chat"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/families/docs_wiki"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/families/meeting"
@@ -489,6 +490,46 @@ func (s *Service) normalizeFirefliesTranscriptArtifact(ctx context.Context, raw 
 	return s.insertNormalizedRecord(ctx, raw, meeting.RecordTypeTranscript, normPayload, hashBytes(normPayload), started, raw.SourceAuthorRef)
 }
 
+// PersistNormalizedRecord is the canonical write path for normalized_records.
+// All connector adapters MUST go through it (or insertNormalizedRecord which
+// is just a wrapper) so the chunks-rebuild + embedding-enqueue hook fires
+// uniformly. Inserting via raw `INSERT INTO normalized_records ...` from a
+// new sync file would skip the hook and silently leave the record invisible
+// to retrieval — surface that as a code-review reject.
+//
+// Returns (normID, true) on fresh insert, (uuid.Nil, false, nil) on dedup
+// conflict, error otherwise. Callers that don't need the id can ignore both
+// return values.
+func (s *Service) PersistNormalizedRecord(
+	ctx context.Context,
+	rawArtifactID uuid.UUID,
+	sourceFeedID uuid.UUID,
+	recordType string,
+	normPayload []byte,
+	recordHash string,
+	sourceTimestamp *time.Time,
+	detectedAuthorRef *string,
+) (uuid.UUID, bool, error) {
+	var normID uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO normalized_records (
+			raw_artifact_id, source_feed_id, record_type, structured_payload_json, record_hash, source_timestamp, detected_author_ref, normalization_version
+		)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,1)
+		ON CONFLICT (source_feed_id, record_hash) DO NOTHING
+		RETURNING id`,
+		rawArtifactID, sourceFeedID, recordType, normPayload, recordHash, sourceTimestamp, detectedAuthorRef,
+	).Scan(&normID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, false, nil
+		}
+		return uuid.Nil, false, err
+	}
+	s.fireOnNormalizedRecordPersisted(ctx, normID)
+	return normID, true, nil
+}
+
 func (s *Service) insertNormalizedRecord(
 	ctx context.Context,
 	raw *RawArtifact,
@@ -498,20 +539,8 @@ func (s *Service) insertNormalizedRecord(
 	sourceTimestamp *time.Time,
 	detectedAuthorRef *string,
 ) error {
-	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO normalized_records (
-			raw_artifact_id, source_feed_id, record_type, structured_payload_json, record_hash, source_timestamp, detected_author_ref, normalization_version
-		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,1)
-		ON CONFLICT (source_feed_id, record_hash) DO NOTHING`,
-		raw.ID, raw.SourceFeedID, recordType, normPayload, recordHash, sourceTimestamp, detectedAuthorRef)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return nil
-	}
-	return nil
+	_, _, err := s.PersistNormalizedRecord(ctx, raw.ID, raw.SourceFeedID, recordType, normPayload, recordHash, sourceTimestamp, detectedAuthorRef)
+	return err
 }
 
 func (r *RawArtifact) ExternalArtifactIDOrFallback() string {

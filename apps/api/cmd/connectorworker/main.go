@@ -218,9 +218,49 @@ func main() {
 		}
 	}()
 
+	// Periodic chunk-rebuild backfill (v0.3.0). Drains normalized_records that
+	// have not been chunked yet (chunks_rebuilt_at IS NULL) every 30s. Catches
+	// records inserted by the 24+ scattered connector adapter call sites that
+	// don't route through the synchronous PersistNormalizedRecord helper.
+	// Fire-and-forget; failures are logged but never crash the worker.
+	chunkBackfillCtx, chunkBackfillCancel := context.WithCancel(ctx)
+	defer chunkBackfillCancel()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		// Run once immediately so a fresh worker picks up any rows that landed
+		// while it was down. Bounded at 100 per tick to keep latency steady.
+		drainOnce := func() {
+			processed, failures, err := deps.Chunks.RebuildPendingNormalizedRecords(chunkBackfillCtx, 100)
+			if err != nil {
+				log.Printf("connectorworker: chunk backfill query: %v", err)
+				return
+			}
+			if processed > 0 || len(failures) > 0 {
+				log.Printf("connectorworker: chunk backfill processed=%d failures=%d", processed, len(failures))
+			}
+			for i, f := range failures {
+				if i >= 3 {
+					break
+				}
+				log.Printf("connectorworker: chunk backfill failure: %v", f)
+			}
+		}
+		drainOnce()
+		for {
+			select {
+			case <-chunkBackfillCtx.Done():
+				return
+			case <-ticker.C:
+				drainOnce()
+			}
+		}
+	}()
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
+	chunkBackfillCancel()
 	srv.Shutdown()
 	shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

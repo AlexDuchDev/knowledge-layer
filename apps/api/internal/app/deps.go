@@ -221,6 +221,12 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 	ingestionSvc := ingestion_connectors.NewService(pool, adapterReg)
 	gOAuth, mOAuth := connectoroauth.OAuthConfigs(cfg)
 	ingestionSvc.ConfigureConnectorOAuth(gOAuth, mOAuth)
+	// v0.3.0: when an adapter writes via PersistNormalizedRecord, fire the
+	// chunks rebuild synchronously. The 24+ inline INSERTs that did not get
+	// refactored fall back to the periodic backfill in connectorworker.
+	ingestionSvc.SetOnNormalizedRecordPersisted(func(ctx context.Context, normID uuid.UUID) error {
+		return chunksSvc.OnNormalizedRecordPersisted(ctx, normID)
+	})
 
 	var graphExtract *graphragextract.Service
 	if graphStore != nil {

@@ -18,19 +18,29 @@ type EntityViewEvaluator interface {
 }
 
 // Candidate is one semantic neighbor after SQL domain scoping and permission filtering.
+//
+// As of v0.3.0 a chunk can be sourced either from an entity (legacy) or from a
+// normalized_record (chat / meeting / docs surface that has not been promoted
+// to an entity). For normalized-record candidates EntityID is uuid.Nil and
+// NormalizedRecordID is non-nil; the entity-only fields (EntityType,
+// ApprovalStatus, TruthMode, LifecycleState, FreshnessStatus) are populated
+// with synthesized defaults appropriate for raw-source chunks. Callers that
+// previously hard-required EntityID must now check `c.EntityID == uuid.Nil`
+// and route normalized-record candidates separately.
 type Candidate struct {
-	ChunkID          uuid.UUID
-	EntityID         uuid.UUID
-	TextContent      string
-	Ordinal          int
-	Distance         float64
-	DomainID         uuid.UUID
-	SensitivityLevel int
-	EntityType       string
-	ApprovalStatus   string
-	TruthMode        string
-	LifecycleState   string
-	FreshnessStatus  string
+	ChunkID            uuid.UUID
+	EntityID           uuid.UUID
+	NormalizedRecordID uuid.UUID
+	TextContent        string
+	Ordinal            int
+	Distance           float64
+	DomainID           uuid.UUID
+	SensitivityLevel   int
+	EntityType         string
+	ApprovalStatus     string
+	TruthMode          string
+	LifecycleState     string
+	FreshnessStatus    string
 }
 
 // Service stores and queries vector embeddings joined to chunks and entities.
@@ -99,15 +109,44 @@ func (s *Service) SemanticNear(ctx context.Context, principal uuid.UUID, granted
 		fetch = 200
 	}
 	vecLit := vectorLiteral(queryEmbedding)
+	// v0.3.0: union the two chunk surfaces. Entity-rooted chunks pull
+	// governance fields (approval, lifecycle, etc.) from `entities`;
+	// normalized_record-rooted chunks synthesize sensible defaults
+	// (pre_approved / mirrored_authority / published / fresh) and inherit
+	// domain + sensitivity from the source feed. The order ensures the
+	// distance comparator works across both sets in a single ORDER BY.
 	rows, err := s.pool.Query(ctx, `
-		SELECT c.id, c.entity_id, c.text_content, c.ordinal,
-			e.domain_id, e.sensitivity_level, e.type, e.approval_status,
-			e.truth_mode, e.lifecycle_state, e.freshness_status,
-			(em.embedding <=> $1::vector)::float8 AS dist
-		FROM embeddings em
-		JOIN chunks c ON c.id = em.chunk_id
-		JOIN entities e ON e.id = c.entity_id AND e.archived_at IS NULL
-		WHERE em.model = $2 AND e.domain_id = ANY($3::uuid[])
+		SELECT chunk_id, entity_id, normalized_record_id, text_content, ordinal,
+			domain_id, sensitivity_level, entity_type, approval_status,
+			truth_mode, lifecycle_state, freshness_status, dist
+		FROM (
+			SELECT c.id AS chunk_id, c.entity_id, NULL::uuid AS normalized_record_id,
+				c.text_content, c.ordinal,
+				e.domain_id, e.sensitivity_level, e.type AS entity_type, e.approval_status,
+				e.truth_mode, e.lifecycle_state, e.freshness_status,
+				(em.embedding <=> $1::vector)::float8 AS dist
+			FROM embeddings em
+			JOIN chunks c ON c.id = em.chunk_id AND c.entity_id IS NOT NULL
+			JOIN entities e ON e.id = c.entity_id AND e.archived_at IS NULL
+			WHERE em.model = $2 AND e.domain_id = ANY($3::uuid[])
+
+			UNION ALL
+
+			SELECT c.id, NULL::uuid, c.normalized_record_id,
+				c.text_content, c.ordinal,
+				sf.domain_id, sf.sensitivity_level,
+				'NormalizedRecord' AS entity_type,
+				'pre_approved' AS approval_status,
+				'mirrored_authority' AS truth_mode,
+				'published' AS lifecycle_state,
+				'fresh' AS freshness_status,
+				(em.embedding <=> $1::vector)::float8
+			FROM embeddings em
+			JOIN chunks c ON c.id = em.chunk_id AND c.normalized_record_id IS NOT NULL
+			JOIN normalized_records nr ON nr.id = c.normalized_record_id
+			JOIN source_feeds sf ON sf.id = nr.source_feed_id
+			WHERE em.model = $2 AND sf.domain_id = ANY($3::uuid[])
+		) ranked
 		ORDER BY dist ASC
 		LIMIT $4`, vecLit, model, grantedDomains, fetch)
 	if err != nil {
@@ -117,10 +156,17 @@ func (s *Service) SemanticNear(ctx context.Context, principal uuid.UUID, granted
 	var raw []Candidate
 	for rows.Next() {
 		var c Candidate
-		if err := rows.Scan(&c.ChunkID, &c.EntityID, &c.TextContent, &c.Ordinal,
+		var entID, normID *uuid.UUID
+		if err := rows.Scan(&c.ChunkID, &entID, &normID, &c.TextContent, &c.Ordinal,
 			&c.DomainID, &c.SensitivityLevel, &c.EntityType, &c.ApprovalStatus,
 			&c.TruthMode, &c.LifecycleState, &c.FreshnessStatus, &c.Distance); err != nil {
 			return nil, err
+		}
+		if entID != nil {
+			c.EntityID = *entID
+		}
+		if normID != nil {
+			c.NormalizedRecordID = *normID
 		}
 		raw = append(raw, c)
 	}
