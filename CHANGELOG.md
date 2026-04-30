@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-04-30
+
+Adds a generic `openapi_v3` connector type that lets operators add REST-API source feeds via configuration instead of per-vendor Go code. Adopts the spirit of Hugr's data-source model (one configurable HTTP source) while keeping Knowledge Layer's REST/connector-first surface. See [ADR-0016](docs/adr/0016-openapi-v3-generic-connector.md).
+
+### Added
+
+- **`openapi_v3` connector type** at id `20000000-0000-0000-0000-000000000014` (migration 000044). Single new connector serves any REST API matching v0.6.0 constraints — bearer auth, offset/limit pagination, JSONPath strict-mode mapping, 5MB spec cap.
+- **`apps/api/internal/ingestion_connectors/adapters/openapi_v3/`** — five-file package:
+  - `config.go` — `FeedConfig` struct + activation `Validate()` covering 11 misconfiguration classes.
+  - `jsonpath.go` — strict-mode wrapper around `PaesslerAG/jsonpath`. Rejects `?(...)` filter expressions at activation; missing-field reads return empty (soft) so individual bad records don't abort sync.
+  - `spec_validate.go` — `FetchAndValidateSpec(ctx, openAPIURL, listPath)` parses via `getkin/kin-openapi`, enforces 5MB cap + 10s timeout + `IsExternalRefsAllowed=false` (SSRF defense), asserts `list_path` exists as a `GET` operation.
+  - `sync.go` — `Run(ctx, baseURL, cfg, httpClient, onItem)` paginates via offset/limit, maps each item through the operator's JSONPath table, hashes for dedup. Caller owns persistence (Service.PersistNormalizedRecord) so this package stays decoupled from the rest of ingestion.
+  - `adapter.go` — implements `ConnectorAdapter`. `ValidateSourceFeedConfig` runs both schema + spec checks at activation; `SyncFeed` delegates to the service layer.
+- **Adversarial test suite** (`openapi_v3_test.go`) — 21 sub-tests including JSONPath-strict-mode rejection of three filter shapes, 11 config-misuse cases, oversized-spec rejection, valid-spec happy path, missing-field soft empty.
+- **Closed `record_type` enum** matching `chunks/extract.go`'s 14 supported types — typo from operator gets a clear validation error rather than a silent no-op.
+- **[ADR-0016 — OpenAPI v3 generic connector](docs/adr/0016-openapi-v3-generic-connector.md)** codifies the v0.6.0 scope cuts: pagination strategies other than offset/limit, auth schemes other than bearer, JSONPath filter expressions, external `$refs`, and record-type extensions are all out of scope.
+
+### Changed
+
+- `app.NewDeps` registers the new adapter alongside the existing 19 — connector total now 20.
+- New deps: `github.com/getkin/kin-openapi/openapi3` (spec parser) + `github.com/PaesslerAG/jsonpath` (JSONPath engine). Both pure Go.
+- `.env.example` documents the per-feed config shape so operators can start from a known-good template.
+
+### Operations
+
+- **Per-feed token storage** matches existing connector pattern (notion, jira, etc.). Encryption-at-rest for `connector_config_json` secrets is a pre-existing gap not unique to this connector — separate ADR will tackle it when an operator demands it.
+- **Source-feed UI** does not yet surface the new connector — adding it to `apps/web/src/app/(dash)/source-feeds/page.tsx` is a v0.6.x follow-up. Operators can create feeds via direct `POST /source-feeds` with `connector_id=20000000-0000-0000-0000-000000000014` until the picker lands.
+- **Future widening (v0.7+):** cursor + link-header pagination, OAuth2 client_credentials outbound, auto-suggest item_mapping from spec response schemas, GraphQL connector. Each gets its own ADR.
+
 ## [0.5.1] — 2026-04-30
 
 Adds the `/mcp` endpoint that consumes the v0.5.0 OAuth proxy. MCP clients (Claude Desktop, Cursor, IDE plugins) authenticate against the operator's OIDC, exchange an auth code for a JWT bearer at `POST /oauth/token`, then call MCP tools at `POST /mcp`. **Every tool call routes through `AccessEvaluator.Evaluate` exactly like REST** — there is no admin bypass.

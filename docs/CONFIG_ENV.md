@@ -62,6 +62,12 @@ Stateless OAuth proxy fronting an operator-supplied OIDC issuer. Off by default.
 | `OAUTH_PROXY_ISSUER` | Optional override for the proxy's issuer URL in `.well-known` (default `APP_PUBLIC_URL`). |
 | `OAUTH_PROXY_CALLBACK` | Optional override for `/oauth/callback` (default `${OAUTH_PROXY_ISSUER}/oauth/callback`). |
 
+## OpenAPI v3 generic connector (v0.6.0)
+
+A new connector type `openapi_v3` lets operators add REST-API source feeds without writing per-vendor sync code. There are no new env vars; everything is per-feed config in `source_feeds.connector_config_json`. See [ADR-0016](adr/0016-openapi-v3-generic-connector.md).
+
+Constraints (v0.6.0): bearer auth only, offset/limit pagination only, JSONPath strict-mode (no filter expressions), 5MB spec cap, `record_type` closed to the 14 types in `chunks/extract.go`. Cursor + link-header pagination → v0.7.
+
 ## MCP endpoint (API, v0.5.1)
 
 Mounts `/mcp` (Model Context Protocol streamable HTTP transport) with a small initial tool set: `kl_search`, `kl_ask_global`, `kl_get_entity`. Requires `OAUTH_PROXY_ENABLED=true` — bearer auth flows through the proxy and every tool call routes through `AccessEvaluator`. See [ADR-0015](adr/0015-oauth-proxy-and-mcp-bridge.md).

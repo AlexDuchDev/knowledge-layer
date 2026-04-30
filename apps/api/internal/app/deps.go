@@ -36,6 +36,7 @@ import (
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/gmail"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/googlecalendar"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/http_url"
+	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/openapi_v3"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/hubspot"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/intercom"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/jira"
@@ -224,6 +225,7 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		mattermost.Adapter{},
 		http_url.Adapter{},
 		filesystem.Adapter{},
+		openapi_v3.Adapter{},
 		confluence.Adapter{},
 		asana.Adapter{},
 		linear.Adapter{},
