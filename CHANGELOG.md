@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-04-30
+
+Adds an OAuth 2.1 authorization-server proxy fronting an operator-supplied OIDC issuer. Off by default. The proxy is the prerequisite for the v0.5.1 MCP endpoint, which will let Claude Desktop / Cursor authenticate against the operator's IDP (Keycloak, Auth0, Okta, Dex) and consume Knowledge Layer tools with `AccessEvaluator`-gated bearers. v0.5.0 ships the proxy alone so OIDC integration, secret-key rotation, and audit posture bake for one release cycle before any MCP traffic hits.
+
+### Added
+
+- **OAuth 2.1 proxy** ([`apps/api/internal/oauth_proxy/`](apps/api/internal/oauth_proxy/)) — five HTTP endpoints, stateless except for short-lived in-process auth codes:
+  - `GET /.well-known/oauth-authorization-server` — RFC 8414 metadata.
+  - `GET /oauth/authorize` — entry point; signs a state Payload (HMAC-SHA256 over the MCP client's redirect_uri, PKCE challenge, and nonce) and 302s to the IDP.
+  - `GET /oauth/callback` — verifies state HMAC, exchanges IDP code via `coreos/go-oidc/v3`, maps OIDC `sub` to a KL principal via `TokenBridge`, mints a one-time auth code, redirects MCP client back to its registered URI.
+  - `POST /oauth/token` — auth-code grant with PKCE-S256 verification; returns a 1-hour JWT (HS256, signed with `OAUTH_SECRET_KEY`).
+  - `POST /oauth/register` — RFC 7591 dynamic-client registration. New `oauth_clients` table (migration 000043) holds `client_id`, bcrypt-hashed secret, redirect_uri allow-list, and `revoked_at` for operator revocation.
+- **`oauth_proxy.Server.VerifyBearer(jwt)`** — single chokepoint v0.5.1 MCP middleware will call to map a bearer back to a `users.id` UUID. Symmetric HS256 by design (no KMS round-trip needed; same secret on every API replica per ADR-0014's single-instance stance).
+- **State HMAC + 6-test suite** ([`state.go`](apps/api/internal/oauth_proxy/state.go), [`state_test.go`](apps/api/internal/oauth_proxy/state_test.go)) — covers happy-path round-trip, tampered body, wrong key (rotation), expired state, short-key rejection, malformed input.
+- **[ADR-0015 — OAuth proxy and MCP bridge](docs/adr/0015-oauth-proxy-and-mcp-bridge.md)** — codifies single-tenant stance preserved, AccessEvaluator-mandatory contract, no admin-bypass tokens, alternatives considered.
+
+### Changed
+
+- `app.NewDeps` builds an optional `*oauth_proxy.Server` when `OAUTH_PROXY_ENABLED=true`. `Mount` registers the routes before everything else so RFC 8414's anonymous metadata endpoint stays public.
+- `config.ValidateAPI` rejects `OAUTH_PROXY_ENABLED=true` without `OAUTH_SECRET_KEY` ≥ 32 bytes, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, or (in production) `OIDC_CLIENT_SECRET`.
+- New env: `OAUTH_PROXY_ENABLED`, `OAUTH_SECRET_KEY`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SUB_COLUMN`, `OAUTH_PROXY_ISSUER`, `OAUTH_PROXY_CALLBACK`. Documented in [`docs/CONFIG_ENV.md`](docs/CONFIG_ENV.md) "OAuth 2.1 proxy" section.
+
+### Operations
+
+- **Audit emission for `oauth.client.registered` and `oauth.token.issued`** is currently **stderr-only**. Wiring through the audit_events table is deferred to v0.5.1 when MCP traffic gives operators a reason to query these events via `/audit-events`.
+- **No refresh tokens.** Clients re-authorize hourly; silent IDP redirect when the IDP session is fresh keeps UX cost low. Revisit if operators complain.
+- **Single-instance assumption.** Auth codes live 2 minutes in `sync.Map`. Multi-pod deployments need sticky LB or a Redis backend (out of scope per ADR-0014).
+- **Token revocation.** Operators set `oauth_clients.revoked_at = now()` to block a client. In-flight bearers for that client expire naturally (1h max). To force-revoke individual bearers, rotate `OAUTH_SECRET_KEY` (invalidates ALL in-flight tokens — documented trade-off).
+
 ## [0.4.0] — 2026-04-29
 
 Adopts three Hugr-inspired patterns into Knowledge Layer: an L1 cache for hot reads, an `entity_summarize` knowledge job that auto-fills synthesized summaries on the search projection, and a `kltools` operator CLI that ships inside the existing API image. Migration `000042` adds `synthesized_summary` + `synthesized_at` columns to `entity_search_projection`. No backward-incompatible API changes; the cache and the new job are off by default.

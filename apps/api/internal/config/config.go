@@ -54,6 +54,16 @@ type Config struct {
 	CacheL1Enabled    bool
 	CacheL1TTLSeconds int
 	CacheL1MaxMB      int
+	// OAuth 2.1 proxy fronting an operator-supplied OIDC issuer (v0.5.0).
+	// Off by default. Required for the v0.5.1 MCP endpoint when shipped.
+	OAuthProxyEnabled  bool
+	OAuthSecretKey     string // ≥32 bytes; signs OAuth state + JWTs
+	OIDCIssuerURL      string // operator's IDP discovery URL
+	OIDCClientID       string // proxy's client_id at the IDP
+	OIDCClientSecret   string // proxy's client_secret at the IDP
+	OIDCSubColumn      string // users-table column for OIDC sub matching: "email" (default) or "external_idp_subject"
+	OAuthProxyIssuer   string // proxy's own issuer URL for .well-known (defaults to APP_PUBLIC_URL)
+	OAuthProxyCallback string // proxy's /oauth/callback URL (defaults to ${OAuthProxyIssuer}/oauth/callback)
 }
 
 func Load() Config {
@@ -100,6 +110,14 @@ func Load() Config {
 		CacheL1Enabled:                 strings.EqualFold(getenv("CACHE_L1_ENABLED", "false"), "true") || getenv("CACHE_L1_ENABLED", "") == "1",
 		CacheL1TTLSeconds:              parsePositiveInt(getenv("CACHE_L1_TTL_SECONDS", "60"), 60),
 		CacheL1MaxMB:                   parsePositiveInt(getenv("CACHE_L1_MAX_MB", "64"), 64),
+		OAuthProxyEnabled:              strings.EqualFold(getenv("OAUTH_PROXY_ENABLED", "false"), "true") || getenv("OAUTH_PROXY_ENABLED", "") == "1",
+		OAuthSecretKey:                 getenv("OAUTH_SECRET_KEY", ""),
+		OIDCIssuerURL:                  strings.TrimSpace(getenv("OIDC_ISSUER_URL", "")),
+		OIDCClientID:                   strings.TrimSpace(getenv("OIDC_CLIENT_ID", "")),
+		OIDCClientSecret:               getenv("OIDC_CLIENT_SECRET", ""),
+		OIDCSubColumn:                  strings.ToLower(strings.TrimSpace(getenv("OIDC_SUB_COLUMN", "email"))),
+		OAuthProxyIssuer:               strings.TrimRight(getenv("OAUTH_PROXY_ISSUER", ""), "/"),
+		OAuthProxyCallback:             strings.TrimSpace(getenv("OAUTH_PROXY_CALLBACK", "")),
 	}
 }
 

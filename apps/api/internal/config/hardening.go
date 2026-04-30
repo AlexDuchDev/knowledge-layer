@@ -125,6 +125,29 @@ func ValidateAPI(cfg Config) error {
 			}
 		}
 	}
+	// OAuth proxy (v0.5.0) — when enabled, every operator-supplied input must
+	// be valid before the proxy starts answering /oauth/*. Empty strings or
+	// short keys are rejected at startup so the wrong configuration can't
+	// silently issue tokens.
+	if cfg.OAuthProxyEnabled {
+		if len(strings.TrimSpace(cfg.OAuthSecretKey)) < 32 {
+			return fmt.Errorf("OAUTH_SECRET_KEY must be at least 32 bytes when OAUTH_PROXY_ENABLED=true (signs OAuth state and JWT bearers)")
+		}
+		if strings.TrimSpace(cfg.OIDCIssuerURL) == "" {
+			return fmt.Errorf("OIDC_ISSUER_URL is required when OAUTH_PROXY_ENABLED=true")
+		}
+		if strings.TrimSpace(cfg.OIDCClientID) == "" {
+			return fmt.Errorf("OIDC_CLIENT_ID is required when OAUTH_PROXY_ENABLED=true")
+		}
+		if cfg.IsProduction() && strings.TrimSpace(cfg.OIDCClientSecret) == "" {
+			// Public/PKCE-only flows are an MCP-side concern; OUR proxy is a
+			// confidential client at the IDP. Production must hold a secret.
+			return fmt.Errorf("OIDC_CLIENT_SECRET is required when OAUTH_PROXY_ENABLED=true and APP_ENV=production")
+		}
+		if cfg.OIDCSubColumn != "email" && cfg.OIDCSubColumn != "external_idp_subject" {
+			return fmt.Errorf("OIDC_SUB_COLUMN must be 'email' or 'external_idp_subject' (got %q)", cfg.OIDCSubColumn)
+		}
+	}
 	return nil
 }
 

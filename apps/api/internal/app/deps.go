@@ -51,6 +51,7 @@ import (
 	"github.com/knowledgelayer/api/internal/knowledge_jobs"
 	"github.com/knowledgelayer/api/internal/llm"
 	auditops "github.com/knowledgelayer/api/internal/modules/audit_ops/app"
+	"github.com/knowledgelayer/api/internal/oauth_proxy"
 	"github.com/knowledgelayer/api/internal/onboarding"
 	"github.com/knowledgelayer/api/internal/opensearch"
 	"github.com/knowledgelayer/api/internal/platform/metrics"
@@ -106,6 +107,9 @@ type Deps struct {
 	// state-changing paths (entity publish, role grant, policy update, feed config patch).
 	Cache       cache.Cache
 	Invalidator *cache.Invalidator
+	// OAuth 2.1 proxy fronting the operator's OIDC issuer (v0.5.0). Nil
+	// when OAUTH_PROXY_ENABLED=false; routes 404 in that case.
+	OAuthProxy *oauth_proxy.Server
 }
 
 func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
@@ -269,6 +273,44 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		}
 	}
 
+	// OAuth 2.1 proxy (v0.5.0) — opt-in via OAUTH_PROXY_ENABLED. Production
+	// hardening rejects bad config at config.ValidateAPI; here we just wire
+	// the runtime objects when enabled.
+	var oauthSrv *oauth_proxy.Server
+	if cfg.OAuthProxyEnabled {
+		issuer := cfg.OAuthProxyIssuer
+		if issuer == "" {
+			issuer = strings.TrimRight(cfg.AppPublicURL, "/")
+		}
+		callback := cfg.OAuthProxyCallback
+		if callback == "" {
+			callback = issuer + "/oauth/callback"
+		}
+		idp, err := oauth_proxy.NewIDPClient(context.Background(), oauth_proxy.IDPConfig{
+			Issuer:       cfg.OIDCIssuerURL,
+			ClientID:     cfg.OIDCClientID,
+			ClientSecret: cfg.OIDCClientSecret,
+			RedirectURL:  callback,
+		})
+		if err != nil {
+			if cfg.IsProduction() {
+				return nil, fmt.Errorf("app: oauth proxy init: %w", err)
+			}
+			// Local/staging: log and continue without OAuth so the rest of
+			// the API stays runnable for non-MCP flows.
+			fmt.Printf("app: oauth proxy disabled (idp init failed): %v\n", err)
+		} else {
+			oauthSrv = &oauth_proxy.Server{
+				IDP:         idp,
+				Clients:     oauth_proxy.NewClientRepo(pool),
+				Bridge:      oauth_proxy.NewTokenBridge(pool, cfg.OIDCSubColumn),
+				SecretKey:   []byte(cfg.OAuthSecretKey),
+				Issuer:      issuer,
+				RedirectURL: callback,
+			}
+		}
+	}
+
 	return &Deps{
 		Pool:                  pool,
 		Identity:              identity_access.NewRepo(pool),
@@ -306,5 +348,6 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		GraphRAGExtract:       graphExtract,
 		Cache:                 l1,
 		Invalidator:           invalidator,
+		OAuthProxy:            oauthSrv,
 	}, nil
 }

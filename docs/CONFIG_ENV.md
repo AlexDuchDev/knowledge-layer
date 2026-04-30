@@ -47,6 +47,21 @@ These variables enable the server-side OAuth flow for Gmail and Microsoft 365. W
 
 **Operator check (S3):** After configuring `BLOBSTORE_BACKEND=s3`, verify connectivity with a controlled upload in staging (or MinIO against the same endpoint) before relying on blob retention in production. Automated MinIO tests are optional (`MINIO_INTEGRATION` not wired in CI by default).
 
+## OAuth 2.1 proxy (API, v0.5.0)
+
+Stateless OAuth proxy fronting an operator-supplied OIDC issuer. Off by default. Enables RFC 8414 metadata + RFC 7591 dynamic registration + auth-code + PKCE so MCP clients (Claude Desktop, Cursor — when v0.5.1 ships) can authenticate against the operator's IDP. Every issued bearer maps to a real `users` row; `AccessEvaluator` decides every downstream call. See [ADR-0015](adr/0015-oauth-proxy-and-mcp-bridge.md).
+
+| Variable | Description |
+|----------|-------------|
+| `OAUTH_PROXY_ENABLED` | `true` to mount `/oauth/*` and `/.well-known/oauth-authorization-server` (default `false`). |
+| `OAUTH_SECRET_KEY` | ≥32 bytes. Signs OAuth state HMAC + issued JWT bearers. Rotate via [SECRET_ROTATION.md](SECRET_ROTATION.md) (in-flight authorizations break — acceptable trade-off). |
+| `OIDC_ISSUER_URL` | Operator's IDP discovery URL. Reachable at API startup. |
+| `OIDC_CLIENT_ID` | The proxy's client_id at the IDP. |
+| `OIDC_CLIENT_SECRET` | Required in production. Local/staging may run public-client IDP for testing. |
+| `OIDC_SUB_COLUMN` | How OIDC `sub` claim maps to `users` rows: `email` (default) or `external_idp_subject` if you've migrated to that column. |
+| `OAUTH_PROXY_ISSUER` | Optional override for the proxy's issuer URL in `.well-known` (default `APP_PUBLIC_URL`). |
+| `OAUTH_PROXY_CALLBACK` | Optional override for `/oauth/callback` (default `${OAUTH_PROXY_ISSUER}/oauth/callback`). |
+
 ## L1 cache (API, v0.4.0)
 
 In-process BigCache for hot read paths. Off by default. Enable only on the API container — workers do not need it. The cache is **principal-scoped** (every key carries the requesting user) and invalidates on `entity.published`, `role.granted`, `policy.updated`, and `feed.config_patched` events. `/effective-access` cache-hit responses are at most `CACHE_L1_TTL_SECONDS` stale; **backend authorization decisions always run through `AccessEvaluator` regardless** — the cache controls UI affordances, not authz.

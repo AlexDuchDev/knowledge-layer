@@ -16,6 +16,14 @@ func Mount(f *fiber.App, d *app.Deps, cfgOpt ...config.Config) {
 	f.Use(principalMiddleware(cfg))
 	f.Use(PrometheusHTTPRequestsMiddleware())
 
+	// OAuth proxy (v0.5.0): mount before route groups so .well-known and
+	// /oauth/* are reachable without a session principal. The principal
+	// middleware above is non-rejecting, so RFC 8414's anonymous metadata
+	// endpoint stays public as required.
+	if d.OAuthProxy != nil {
+		d.OAuthProxy.Mount(f)
+	}
+
 	mountHealthAndOps(f, d, cfg)
 	mountSecondBrainWebhooks(f, d, cfg)
 	mountToolGatewayRoutes(f, d)
