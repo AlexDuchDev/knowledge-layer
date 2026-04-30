@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -13,6 +14,7 @@ import (
 	"github.com/knowledgelayer/api/internal/answertrace"
 	"github.com/knowledgelayer/api/internal/audit"
 	"github.com/knowledgelayer/api/internal/blobstore"
+	"github.com/knowledgelayer/api/internal/cache"
 	"github.com/knowledgelayer/api/internal/chunks"
 	"github.com/knowledgelayer/api/internal/config"
 	"github.com/knowledgelayer/api/internal/connectoroauth"
@@ -99,10 +101,31 @@ type Deps struct {
 	Onboarding            *onboarding.Service
 	GraphRAG              *graphrag.GraphStore
 	GraphRAGExtract       *graphragextract.Service
+	// Cache + invalidator (v0.4.0). Cache is cache.Null() when CACHE_L1_ENABLED=false
+	// so handlers can call methods unconditionally; Invalidator is wired into
+	// state-changing paths (entity publish, role grant, policy update, feed config patch).
+	Cache       cache.Cache
+	Invalidator *cache.Invalidator
 }
 
 func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 	entities := knowledge_core.NewEntityRepo(pool)
+	// L1 cache: enabled only when CACHE_L1_ENABLED=true. Workers and CLI tools
+	// may inject cache.Null() instead and the rest of the system stays
+	// behaviour-equivalent (every Get is a miss, every Set is a no-op).
+	var l1 cache.Cache = cache.Null()
+	if cfg.CacheL1Enabled {
+		ttl := time.Duration(cfg.CacheL1TTLSeconds) * time.Second
+		bc, bErr := cache.NewBigcache(cache.BigcacheOptions{DefaultTTL: ttl, MaxMB: cfg.CacheL1MaxMB})
+		if bErr != nil {
+			// Cache failure is never fatal — fall back to null cache and
+			// log. The instance remains correct, just slower.
+			fmt.Printf("app: L1 cache init failed, falling back to null: %v\n", bErr)
+		} else {
+			l1 = bc
+		}
+	}
+	invalidator := cache.NewInvalidator(l1)
 	jobPub, err := queue.NewPublisher(cfg.RedisURL)
 	if err != nil {
 		return nil, fmt.Errorf("app: job queue publisher: %w", err)
@@ -137,7 +160,10 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 	rev := review.NewService(pool)
 	extractedTasks := extracted_meeting_tasks.NewService(pool)
 	digest := knowledge_jobs.NewDigestRunner(pool, entities, rev)
-	jobs := knowledge_jobs.NewJobService(pool, digest, jobPub)
+	// EntitySummarizer is built below after PrivacyGateway. JobService
+	// construction is deferred until both runners (digest + summarizer)
+	// are ready so the orchestrator never holds a nil summarizer with
+	// the entity_summarize case enabled.
 	osClient := opensearch.NewClient(cfg.OpenSearchURL)
 	access := identity_access.NewAccessEvaluator(pool)
 	perms := permissions.NewResolver(access)
@@ -166,6 +192,8 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		Access:   access,
 		Audit:    aud,
 	})
+	summarizer := knowledge_jobs.NewEntitySummarizer(pool, privGW)
+	jobs := knowledge_jobs.NewJobService(pool, digest, summarizer, jobPub)
 
 	var graphStore *graphrag.GraphStore
 	if cfg.Neo4jURL != "" {
@@ -276,5 +304,7 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		Follows:               follows,
 		GraphRAG:              graphStore,
 		GraphRAGExtract:       graphExtract,
+		Cache:                 l1,
+		Invalidator:           invalidator,
 	}, nil
 }

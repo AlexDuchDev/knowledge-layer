@@ -81,3 +81,9 @@ Use the full operator list in [PRODUCTION_GO_LIVE_CHECKLIST.md](PRODUCTION_GO_LI
 - [ ] Web app: `NEXT_PUBLIC_USE_DEV_HEADER=false`; users authenticate via session login.
 - [ ] Run smoke adapted for session auth plus ops/metrics bearer checks.
 - [ ] Review [RELEASE_READINESS_AUDIT.md](RELEASE_READINESS_AUDIT.md) for remaining product gaps (blob store, Prometheus handler vs stub, etc.).
+
+## 12. L1 cache (v0.4.0+, optional)
+
+`CACHE_L1_ENABLED=true` enables an in-process BigCache for hot read paths (`/domains`, `/users/:id/effective-access`, `/search` keyword, `/knowledge-jobs/engine-metadata`). The cache is principal-scoped — every key embeds the requesting user — and is invalidated on `entity.published`, `role.granted`, `policy.updated`, `feed.config_patched`. **Authorization decisions are not cached**: every authz call still runs through `AccessEvaluator.Evaluate`. The cache only stores already-decided responses for one TTL window (default 60s).
+
+The `/users/:id/effective-access` endpoint is the most subtle: an operator who just revoked a role for a user may see the old "allowed" UI for up to TTL seconds. The user themselves is not at risk — the next privileged operation runs `AccessEvaluator` synchronously and is denied immediately. To minimise the window, lower `CACHE_L1_TTL_SECONDS`. To eliminate it, leave `CACHE_L1_ENABLED=false`.

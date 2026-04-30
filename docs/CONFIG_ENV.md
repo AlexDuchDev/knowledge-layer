@@ -47,6 +47,16 @@ These variables enable the server-side OAuth flow for Gmail and Microsoft 365. W
 
 **Operator check (S3):** After configuring `BLOBSTORE_BACKEND=s3`, verify connectivity with a controlled upload in staging (or MinIO against the same endpoint) before relying on blob retention in production. Automated MinIO tests are optional (`MINIO_INTEGRATION` not wired in CI by default).
 
+## L1 cache (API, v0.4.0)
+
+In-process BigCache for hot read paths. Off by default. Enable only on the API container — workers do not need it. The cache is **principal-scoped** (every key carries the requesting user) and invalidates on `entity.published`, `role.granted`, `policy.updated`, and `feed.config_patched` events. `/effective-access` cache-hit responses are at most `CACHE_L1_TTL_SECONDS` stale; **backend authorization decisions always run through `AccessEvaluator` regardless** — the cache controls UI affordances, not authz.
+
+| Variable | Description |
+|----------|-------------|
+| `CACHE_L1_ENABLED` | `true` to enable in-process L1 cache (default `false`). |
+| `CACHE_L1_TTL_SECONDS` | Default TTL for cached responses (default `60`). Lower this if operators expect faster propagation of permission changes to UI. |
+| `CACHE_L1_MAX_MB` | BigCache memory ceiling (default `64`). Pre-allocated; budget alongside the API container memory limit. |
+
 ## Web
 
 | Variable | Description |

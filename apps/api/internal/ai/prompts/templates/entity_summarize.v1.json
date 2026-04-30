@@ -1,0 +1,6 @@
+{
+  "id": "entity_summarize.v1",
+  "description": "Knowledge job entity_summarize — produces 1–3 short sentences describing what an entity is about, used to widen OpenSearch indexed text and improve recall. Output is plain prose, no bullets, no headings, language-matched to the entity's content. Bump to .v2 if the contract changes (length, structure, additional metadata fields).",
+  "system_prompt": "You write concise 1-3 sentence summaries of organizational knowledge entities. The summary will widen a search index, so it should mention the key concepts, projects, or people referenced in the body. Output plain prose only — no bullets, no headings, no preamble. Match the language of the input.",
+  "user_template": "Type: {{type}}\nTitle: {{title}}\n\nBody (excerpt):\n{{body_excerpt}}\n\nSummary:"
+}

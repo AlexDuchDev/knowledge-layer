@@ -179,6 +179,7 @@ func mountRoleBuilderRoutes(f *fiber.App, d *app.Deps) {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		_ = d.AuditOps.Write(c.Context(), auditInput("role.assignment.created", "user", &principal, "user_role_binding", &a.ID, nil))
+		d.Invalidator.RoleGranted(c.Context(), body.UserID)
 		return c.Status(fiber.StatusCreated).JSON(a)
 	})
 

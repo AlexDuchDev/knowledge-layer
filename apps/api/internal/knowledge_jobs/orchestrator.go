@@ -17,12 +17,13 @@ import (
 // dispatches to a type-specific processor (e.g. weekly_digest), and merges run metrics.
 // It is internal to the knowledge_jobs package; the HTTP surface enqueues work via Asynq.
 type runOrchestrator struct {
-	pool   *pgxpool.Pool
-	digest *DigestRunner
+	pool       *pgxpool.Pool
+	digest     *DigestRunner
+	summarizer *EntitySummarizer
 }
 
-func newRunOrchestrator(pool *pgxpool.Pool, digest *DigestRunner) *runOrchestrator {
-	return &runOrchestrator{pool: pool, digest: digest}
+func newRunOrchestrator(pool *pgxpool.Pool, digest *DigestRunner, summarizer *EntitySummarizer) *runOrchestrator {
+	return &runOrchestrator{pool: pool, digest: digest, summarizer: summarizer}
 }
 
 func (o *runOrchestrator) execute(ctx context.Context, runID uuid.UUID, job *KnowledgeJob, operator uuid.UUID) error {
@@ -138,6 +139,11 @@ func (o *runOrchestrator) executeProcessor(ctx context.Context, runID uuid.UUID,
 			return errors.New("orchestrator: support_trends_extraction processor not configured")
 		}
 		return o.digest.RunSupportTrendsExtraction(ctx, runID, job, operator)
+	case "entity_summarize":
+		if o.summarizer == nil {
+			return errors.New("orchestrator: entity_summarize processor not configured (LLM provider missing?)")
+		}
+		return o.summarizer.RunEntitySummarize(ctx, runID, job, operator)
 	default:
 		return fmt.Errorf("orchestrator: unsupported job_type %q", job.JobType)
 	}

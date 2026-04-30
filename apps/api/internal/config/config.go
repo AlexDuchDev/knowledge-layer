@@ -48,6 +48,12 @@ type Config struct {
 	MicrosoftOAuthClientID     string
 	MicrosoftOAuthClientSecret string
 	MicrosoftOAuthTenant       string // default "common"
+	// L1 in-process cache for hot read paths. Off by default to keep
+	// memory ceiling predictable; flip on for the API container only
+	// (workers don't need it).
+	CacheL1Enabled    bool
+	CacheL1TTLSeconds int
+	CacheL1MaxMB      int
 }
 
 func Load() Config {
@@ -91,7 +97,25 @@ func Load() Config {
 		MicrosoftOAuthClientID:         getenv("MICROSOFT_OAUTH_CLIENT_ID", ""),
 		MicrosoftOAuthClientSecret:     getenv("MICROSOFT_OAUTH_CLIENT_SECRET", ""),
 		MicrosoftOAuthTenant:           strings.TrimSpace(getenv("MICROSOFT_OAUTH_TENANT", "common")),
+		CacheL1Enabled:                 strings.EqualFold(getenv("CACHE_L1_ENABLED", "false"), "true") || getenv("CACHE_L1_ENABLED", "") == "1",
+		CacheL1TTLSeconds:              parsePositiveInt(getenv("CACHE_L1_TTL_SECONDS", "60"), 60),
+		CacheL1MaxMB:                   parsePositiveInt(getenv("CACHE_L1_MAX_MB", "64"), 64),
 	}
+}
+
+func parsePositiveInt(s string, def int) int {
+	v := strings.TrimSpace(s)
+	n := 0
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return def
+		}
+		n = n*10 + int(r-'0')
+	}
+	if n <= 0 {
+		return def
+	}
+	return n
 }
 
 // APIPublicOrigin returns the public base URL of this API (for OAuth redirect_uri). Falls back to AppPublicURL.

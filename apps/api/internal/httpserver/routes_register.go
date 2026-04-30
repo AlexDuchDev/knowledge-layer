@@ -17,6 +17,7 @@ import (
 	"github.com/knowledgelayer/api/internal/ai/prompts"
 	"github.com/knowledgelayer/api/internal/answertrace"
 	"github.com/knowledgelayer/api/internal/app"
+	"github.com/knowledgelayer/api/internal/cache"
 	"github.com/knowledgelayer/api/internal/config"
 	"github.com/knowledgelayer/api/internal/extracted_meeting_tasks"
 	"github.com/knowledgelayer/api/internal/governance"
@@ -129,13 +130,26 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 		if v := strings.TrimSpace(c.Query("entity_type")); v != "" {
 			in.EntityType = &v
 		}
+		// Cache the "simple" UI introspection variant: principal + target + action + resource_type.
+		// Variants with resource_id / domain_id / sensitivity / entity_type query params
+		// fall through uncached — diversity is too high for keyspace efficiency.
+		simpleVariant := in.ResourceID == nil && in.DomainID == nil && in.SensitivityLevel == nil && in.EntityType == nil
+		var cacheKey string
+		if simpleVariant {
+			cacheKey = cache.EffectiveAccessKey(principal, targetID) + ":" + action + ":" + resourceType
+			if cached, gerr := d.Cache.Get(c.Context(), cacheKey); gerr == nil {
+				c.Set("X-Cache", "HIT")
+				c.Set("Content-Type", "application/json")
+				return c.Send(cached)
+			}
+		}
 		dec, err := d.Access.Evaluate(c.Context(), in)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 		// AccessDecision.Trace is `json:"-"` for safety; rebuild the response so
 		// the trace becomes visible only on this introspection endpoint.
-		return c.JSON(fiber.Map{
+		respBody := fiber.Map{
 			"allow":                 dec.Allow,
 			"reason_code":           dec.ReasonCode,
 			"reasons":               dec.Reasons,
@@ -148,14 +162,22 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 			"matched_policies":      dec.MatchedPolicies,
 			"matched_overrides":     dec.MatchedOverrides,
 			"input": fiber.Map{
-				"action":           in.Action,
-				"resource_type":    in.ResourceType,
-				"resource_id":      in.ResourceID,
-				"domain_id":        in.DomainID,
+				"action":            in.Action,
+				"resource_type":     in.ResourceType,
+				"resource_id":       in.ResourceID,
+				"domain_id":         in.DomainID,
 				"sensitivity_level": in.SensitivityLevel,
-				"entity_type":      in.EntityType,
+				"entity_type":       in.EntityType,
 			},
-		})
+		}
+		if simpleVariant {
+			body, _ := json.Marshal(respBody)
+			_ = d.Cache.Set(c.Context(), cacheKey, body, 0)
+			c.Set("X-Cache", "MISS")
+			c.Set("Content-Type", "application/json")
+			return c.Send(body)
+		}
+		return c.JSON(respBody)
 	})
 
 	f.Get("/domains", func(c *fiber.Ctx) error {
@@ -163,11 +185,22 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 		if err != nil {
 			return err
 		}
+		// L1 cache read-through (v0.4.0). Cache.Null() if disabled.
+		key := cache.DomainsKey(principal)
+		if cached, gerr := d.Cache.Get(c.Context(), key); gerr == nil {
+			c.Set("X-Cache", "HIT")
+			c.Set("Content-Type", "application/json")
+			return c.Send(cached)
+		}
 		list, err := d.Identity.ListDomainsForUser(c.Context(), principal)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
-		return c.JSON(list)
+		body, _ := json.Marshal(list)
+		_ = d.Cache.Set(c.Context(), key, body, 0)
+		c.Set("X-Cache", "MISS")
+		c.Set("Content-Type", "application/json")
+		return c.Send(body)
 	})
 
 	f.Get("/onboarding/domain-kits", func(c *fiber.Ctx) error {
@@ -1109,6 +1142,7 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 		if pres.WasPublished {
 			_ = d.Search.ReindexEntity(c.Context(), id)
 			_ = d.AuditOps.Write(c.Context(), auditInput("entity.published", "user", &principal, "entity", &id, ptr("direct")))
+			d.Invalidator.EntityPublished(c.Context(), id)
 		}
 		return c.JSON(fiber.Map{
 			"entity":         pres.Entity,
@@ -2181,7 +2215,23 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 		if _, err := httpcontext.RequirePrincipal(c); err != nil {
 			return err
 		}
-		return c.JSON(knowledge_jobs.KnowledgeJobsEngineMetadataResponse())
+		// Engine metadata is global — same response for every principal,
+		// changes only when a new release ships. Process restart drops the
+		// in-memory cache automatically (BigCache is not persisted), so a
+		// new job_type registered in deps.go is immediately visible without
+		// explicit invalidation. No TTL refresh during the lifetime of a
+		// process is desired or needed.
+		key := cache.EngineMetadataKey()
+		if cached, gerr := d.Cache.Get(c.Context(), key); gerr == nil {
+			c.Set("X-Cache", "HIT")
+			c.Set("Content-Type", "application/json")
+			return c.Send(cached)
+		}
+		body, _ := json.Marshal(knowledge_jobs.KnowledgeJobsEngineMetadataResponse())
+		_ = d.Cache.Set(c.Context(), key, body, 0)
+		c.Set("X-Cache", "MISS")
+		c.Set("Content-Type", "application/json")
+		return c.Send(body)
 	})
 
 	f.Get("/job-builder/presets", func(c *fiber.Ctx) error {
@@ -2794,6 +2844,7 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 			} else if pres.WasPublished {
 				_ = d.Search.ReindexEntity(c.Context(), t.TargetID)
 				_ = d.AuditOps.Write(c.Context(), auditInput("entity.published", "user", &principal, "entity", &t.TargetID, ptr("review_approval")))
+				d.Invalidator.EntityPublished(c.Context(), t.TargetID)
 			}
 		}
 		_ = d.AuditOps.Write(c.Context(), auditInput("review.approved", "user", &principal, "review_task", &id, ptr("approved")))
@@ -3852,12 +3903,27 @@ func mountAPIRoutes(f *fiber.App, d *app.Deps, cfg config.Config) {
 			"approval_status":  c.Query("approval_status"),
 			"expand_relations": c.Query("expand_relations"),
 		}
+		// L1 cache read-through. Cache key includes the principal so granted
+		// domains line up; logging the search interaction still happens on
+		// every hit (cached or not) so analytics aren't lost.
+		query := filters["q"]
+		searchKey := cache.SearchKeywordKey(principal, query, filters)
+		if cached, gerr := d.Cache.Get(c.Context(), searchKey); gerr == nil {
+			d.Retrieval.LogSearchInteraction(c.Context(), principal, filters, -1) // -1 = served-from-cache marker
+			c.Set("X-Cache", "HIT")
+			c.Set("Content-Type", "application/json")
+			return c.Send(cached)
+		}
 		hits, err := d.Retrieval.SearchScoped(c.Context(), principal, filters)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
 		d.Retrieval.LogSearchInteraction(c.Context(), principal, filters, len(hits))
-		return c.JSON(fiber.Map{"hits": hits})
+		body, _ := json.Marshal(fiber.Map{"hits": hits})
+		_ = d.Cache.Set(c.Context(), searchKey, body, 0)
+		c.Set("X-Cache", "MISS")
+		c.Set("Content-Type", "application/json")
+		return c.Send(body)
 	})
 
 }

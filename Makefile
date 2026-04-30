@@ -18,6 +18,7 @@ test:
 	cd apps/api && go test ./... -count=1
 	cd apps/api && go build -o /dev/null ./cmd/jobworker
 	cd apps/api && go build -o /dev/null ./cmd/connectorworker
+	cd apps/api && go build -o /dev/null ./cmd/kltools
 
 lint:
 	cd apps/api && go vet ./...

@@ -314,6 +314,9 @@ func mountIdentityAdmin(f *fiber.App, d *app.Deps) {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		_ = d.AuditOps.Write(c.Context(), auditInput("domain_grant.upserted", "user", &principal, "domain_grant", &g.ID, nil))
+		// Drop the grantee's domain + effective-access cache so the UI sees the
+		// new permission shape immediately on the next read.
+		d.Invalidator.RoleGranted(c.Context(), body.UserID)
 		return c.Status(fiber.StatusCreated).JSON(g)
 	})
 
@@ -344,6 +347,7 @@ func mountIdentityAdmin(f *fiber.App, d *app.Deps) {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		_ = d.AuditOps.Write(c.Context(), auditInput("domain_grant.updated", "user", &principal, "domain_grant", &id, nil))
+		d.Invalidator.RoleGranted(c.Context(), g0.UserID)
 		return c.JSON(g)
 	})
 
@@ -367,6 +371,7 @@ func mountIdentityAdmin(f *fiber.App, d *app.Deps) {
 			return fiber.NewError(fiber.StatusNotFound, "not found")
 		}
 		_ = d.AuditOps.Write(c.Context(), auditInput("domain_grant.deleted", "user", &principal, "domain_grant", &id, nil))
+		d.Invalidator.RoleGranted(c.Context(), g0.UserID)
 		return c.SendStatus(fiber.StatusNoContent)
 	})
 

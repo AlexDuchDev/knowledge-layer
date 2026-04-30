@@ -10,6 +10,7 @@ var ImplementedKnowledgeJobTypes = []string{
 	"planning_summary",
 	"stale_scan",
 	"support_trends_extraction",
+	"entity_summarize",
 }
 
 // JobTypeCapability describes executor support for a catalog job_type (API + docs alignment).
@@ -38,6 +39,8 @@ func IsKnowledgeJobProcessorImplemented(jobType string) bool {
 	case "stale_scan":
 		return true
 	case "support_trends_extraction":
+		return true
+	case "entity_summarize":
 		return true
 	default:
 		return false

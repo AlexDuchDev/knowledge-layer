@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-04-29
+
+Adopts three Hugr-inspired patterns into Knowledge Layer: an L1 cache for hot reads, an `entity_summarize` knowledge job that auto-fills synthesized summaries on the search projection, and a `kltools` operator CLI that ships inside the existing API image. Migration `000042` adds `synthesized_summary` + `synthesized_at` columns to `entity_search_projection`. No backward-incompatible API changes; the cache and the new job are off by default.
+
+### Added
+
+- **L1 in-process cache** ([`apps/api/internal/cache/`](apps/api/internal/cache/)) — BigCache via [eko/gocache/v4](https://github.com/eko/gocache) wrapping `Get`/`Set`/`Delete`/`DeletePrefix`. Wired into hot reads: `GET /domains`, `GET /users/:id/effective-access` (simple-variant only — query-param-rich variants pass through), `GET /search` (keyword filters), `GET /knowledge-jobs/engine-metadata`. Every cache key is **principal-scoped**: `cache.DomainsKey(principal)`, `cache.EffectiveAccessKey(principal, target)`, `cache.SearchKeywordKey(principal, query, filters)`. Cross-principal contamination is the safety-critical regression to avoid; the test suite (`cache_test.go`, 7 tests) asserts every key embeds the principal. Cache `X-Cache: HIT|MISS` header surfaced for diagnosability.
+- **Cache invalidator** ([`apps/api/internal/cache/invalidation.go`](apps/api/internal/cache/invalidation.go)) — drops cached entries on state-changing events. Hooks fire after `entity.published` (direct + review approval), `domain_grant.upserted` / `.updated` / `.deleted` (via `Invalidator.RoleGranted`), `role.assignment.created`. Invalidator refuses empty-prefix calls so a coding bug can't wipe the entire cache.
+- **`entity_summarize` knowledge job** ([`apps/api/internal/knowledge_jobs/entity_summarize.go`](apps/api/internal/knowledge_jobs/entity_summarize.go)) — sixth implemented job_type. Reads entities lacking `synthesized_summary`, routes each through `privacy.PrivacyGateway.InvokeOpenAI` with `PromptTemplateID="entity_summarize.v1"`, UPSERTs `synthesized_summary` + `synthesized_at` on `entity_search_projection`. Cost discipline: per-run cap (default 100, hard cap 500), body excerpt truncated to ~1200 runes. Fails clearly when no LLM provider is configured rather than silently producing empty summaries.
+- **Prompt template** [`entity_summarize.v1.json`](apps/api/internal/ai/prompts/templates/entity_summarize.v1.json) — concise prose, language-matched, no preamble.
+- **`kltools` CLI** ([`apps/api/cmd/kltools/`](apps/api/cmd/kltools/)) — operator binary with three subcommands: `summarize` (backfill via the entity_summarize job, dry-run by default), `reindex` (rebuild chunks for a specific entity or drain pending normalized_records, dry-run by default), `schema-info` (read-only pipeline-stage counts + connector inventory + implemented job types). Ships inside `ghcr.io/.../knowledge-layer-api:v0.4.0` as `/app/knowledge-tools`. Operator usage: `docker compose exec api /app/knowledge-tools schema-info`. DB pool capped at 4 connections so the CLI never starves the running API. Pattern after Hugr's `hugr-tools`.
+- **5-touch-point job-type registration** for `entity_summarize`: [`processor_capabilities.go`](apps/api/internal/knowledge_jobs/processor_capabilities.go) (slice + capability switch), [`orchestrator.go`](apps/api/internal/knowledge_jobs/orchestrator.go) (executeProcessor case + new `summarizer` field on the orchestrator). `resolveSources` and `buildInputRefs` switches deliberately not extended — the job reads entities directly, not source feeds.
+
+### Changed
+
+- `entity_search_projection` gains `synthesized_summary TEXT` and `synthesized_at TIMESTAMPTZ` columns (migration 000042). Partial index `idx_entity_search_projection_pending_summary` lets the backfill paginate efficiently. OpenSearch indexed text widening to include `synthesized_summary` is **not yet wired** — that's a v0.4.x follow-up; the column is populated in v0.4.0 so the data is ready when the indexer is updated.
+- `JobService` constructor now takes an `*EntitySummarizer`. `app.NewDeps` builds it after `PrivacyGateway` so the orchestrator never holds a nil summarizer when the entity_summarize case is enabled.
+- `Dockerfile.api` builds and ships a fourth binary (`/app/knowledge-tools`) alongside `knowledge-api`, `knowledge-jobworker`, `knowledge-connectorworker`. No new image; no new release-CI job. Web image unchanged.
+- `Makefile` test target builds `cmd/kltools` to keep the binary green in CI.
+- `.env.example` documents `CACHE_L1_ENABLED`, `CACHE_L1_TTL_SECONDS`, `CACHE_L1_MAX_MB` (all default off / conservative).
+
+### Operations
+
+- **Cache is off by default**. Enable on the API container only — workers don't need it. The cache is principal-scoped and invalidates on entity publish, role grant, policy update, feed config patch.
+- **`/users/:id/effective-access` cache hit can be up to TTL seconds stale.** This is UI affordance staleness only — `AccessEvaluator.Evaluate` runs synchronously on every authorization decision, so a freshly-revoked role is enforced immediately on protected operations. To eliminate the UI window, leave `CACHE_L1_ENABLED=false`. Documented in [`docs/PRODUCTION_HARDENING.md` §12](docs/PRODUCTION_HARDENING.md).
+- **`kltools` write subcommands require `--yes`**. Dry-run by default; the message explains exactly what would change. Inspired by Hugr's `hugr-tools` parallel-LLM pattern but stricter on operator confirmation since the binary ships in the same image as the running API.
+
 ## [0.3.0] — 2026-04-29
 
 Closes the chunking gap: before this release, the entire ingestion pipeline (`raw_artifacts → normalized_records → entities → chunks → embeddings`) only chunked content that became an entity, and **only Google Drive documents had a normalized-record-to-entity mapper**. All other record types — chat messages (Slack / Telegram / Mattermost / Teams), meeting transcripts (Fireflies / Google Meet), email (Gmail / M365), work items (Linear / Jira / Asana / Trello), support conversations (Zendesk / Intercom / HubSpot), Confluence / Notion docs, calendar events — sat in `normalized_records` indefinitely, never chunked, never embedded, invisible to retrieval. A live audit on a v0.2.x stack showed 16 normalized records resulting in **0 entities and 0 chunks**.

@@ -69,14 +69,24 @@ type JobRun struct {
 }
 
 type JobService struct {
-	pool    *pgxpool.Pool
-	digest  *DigestRunner
-	publish *queue.Publisher
-	orch    *runOrchestrator
+	pool       *pgxpool.Pool
+	digest     *DigestRunner
+	summarizer *EntitySummarizer
+	publish    *queue.Publisher
+	orch       *runOrchestrator
 }
 
-func NewJobService(pool *pgxpool.Pool, digest *DigestRunner, publish *queue.Publisher) *JobService {
-	return &JobService{pool: pool, digest: digest, publish: publish, orch: newRunOrchestrator(pool, digest)}
+// NewJobService wires the orchestrator. summarizer may be nil when no LLM
+// provider is configured (local dev without OPENAI_API_KEY); the orchestrator
+// returns a clear error in that case rather than silently no-op'ing.
+func NewJobService(pool *pgxpool.Pool, digest *DigestRunner, summarizer *EntitySummarizer, publish *queue.Publisher) *JobService {
+	return &JobService{
+		pool:       pool,
+		digest:     digest,
+		summarizer: summarizer,
+		publish:    publish,
+		orch:       newRunOrchestrator(pool, digest, summarizer),
+	}
 }
 
 func (s *JobService) List(ctx context.Context) ([]KnowledgeJob, error) {
