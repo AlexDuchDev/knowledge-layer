@@ -17,6 +17,13 @@ services:
     image: ghcr.io/${GHCR_OWNER:-alexduchdev}/knowledge-layer-api:${RC_TAG:-v0.1.0-rc2}
     build: !reset null
     pull_policy: always
+    environment:
+      # v0.4.0+: enable L1 cache during RC validation so the X-Cache header
+      # surfaces and the RC_VALIDATION probe can verify second-read HIT.
+      # Default off in normal compose; this override only affects the rc stack.
+      CACHE_L1_ENABLED: "true"
+      CACHE_L1_TTL_SECONDS: "60"
+      CACHE_L1_MAX_MB: "32"
 
   jobworker:
     image: ghcr.io/${GHCR_OWNER:-alexduchdev}/knowledge-layer-api:${RC_TAG:-v0.1.0-rc2}
