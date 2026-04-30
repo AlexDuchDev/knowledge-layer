@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-04-30
+
+Adds the `/mcp` endpoint that consumes the v0.5.0 OAuth proxy. MCP clients (Claude Desktop, Cursor, IDE plugins) authenticate against the operator's OIDC, exchange an auth code for a JWT bearer at `POST /oauth/token`, then call MCP tools at `POST /mcp`. **Every tool call routes through `AccessEvaluator.Evaluate` exactly like REST** — there is no admin bypass.
+
+### Added
+
+- **MCP server** ([`apps/api/internal/mcp/`](apps/api/internal/mcp/)) — built on [`mark3labs/mcp-go`](https://github.com/mark3labs/mcp-go) v0.50.0 with streamable HTTP transport. Three initial tools, each access-guarded:
+  - `kl_search` — keyword search across permitted entities. Wraps `Retrieval.SearchScoped`. Action `view`, resource_type `entity`.
+  - `kl_ask_global` — synthesized Q&A through the privacy gateway. Wraps `Retrieval.AskGlobal`. Same action/resource_type.
+  - `kl_get_entity` — single-entity fetch by UUID. Wraps `Entities.Get`.
+- **Mandatory access-guard** ([`access_guard.go`](apps/api/internal/mcp/access_guard.go)) — `withAccessGuard(eval, action, resourceType, fn)` wraps every tool. Calls `AccessEvaluator.Evaluate` first; deny short-circuits before the inner handler runs. Missing principal in context is a hard reject (defense in depth — the bearer middleware is supposed to populate it, but a bug there must not silently allow the call).
+- **Bearer middleware** ([`route.go`](apps/api/internal/mcp/route.go)) — Fiber middleware runs before `/mcp`. Reads `Authorization: Bearer X`, calls `oauth_proxy.Server.VerifyBearer` (added in v0.5.0), stashes the principal UUID via `mcp.WithPrincipal(ctx, ...)`. 401s with `WWW-Authenticate: Bearer realm="mcp", error="invalid_token"` on bad/missing tokens.
+- **Static-contract test** ([`server_test.go`](apps/api/internal/mcp/server_test.go)) — `TestNew_allToolsAccessGuarded` iterates the registered tool set and asserts every handler short-circuits on a deny decision. Prevents the future bug where someone adds a tool that bypasses `withAccessGuard`. Plus 4 unit tests covering allow/deny/missing-principal/eval-error paths.
+
+### Changed
+
+- `app.NewDeps` builds an `*mcpserver.MCPServer` when `MCP_ENABLED=true` and the OAuth proxy is also up.
+- `httpserver.Mount` mounts `/mcp` after the OAuth proxy. Bearer middleware sits inline; the MCP handler is wrapped via Fiber's `adaptor.HTTPHandler` because `mcp-go` exposes a stdlib `http.Handler`.
+- `config.ValidateAPI` rejects `MCP_ENABLED=true` without `OAUTH_PROXY_ENABLED=true`. The /mcp endpoint cannot validate bearers without the proxy; failing at startup beats a deployed-but-broken endpoint.
+- New env: `MCP_ENABLED` (default `false`). Documented in [`docs/CONFIG_ENV.md`](docs/CONFIG_ENV.md) "MCP endpoint" section.
+- ADR-0015 promoted to "OAuth + MCP" with v0.5.1 implementation notes appended.
+
+### Operations
+
+- **Audit emission for `mcp.tool.invoked` is deferred to a follow-up patch.** v0.5.1 logs to stderr; the underlying audit_events row is wired in v0.5.x once operators have a reason to query MCP traffic via `/audit-events`.
+- **Token revocation cascade.** A revoked OAuth client (`oauth_clients.revoked_at = now()`) blocks new `/oauth/token` exchanges; bearers issued before revocation expire naturally within 1h. Force-revoke bearers across the fleet by rotating `OAUTH_SECRET_KEY` (acceptable trade-off — documented in ADR-0015).
+- **Single-instance assumption persists.** ADR-0014 stays in force; auth codes still live 2 minutes in `sync.Map`. Multi-pod operators continue to need sticky LB.
+
 ## [0.5.0] — 2026-04-30
 
 Adds an OAuth 2.1 authorization-server proxy fronting an operator-supplied OIDC issuer. Off by default. The proxy is the prerequisite for the v0.5.1 MCP endpoint, which will let Claude Desktop / Cursor authenticate against the operator's IDP (Keycloak, Auth0, Okta, Dex) and consume Knowledge Layer tools with `AccessEvaluator`-gated bearers. v0.5.0 ships the proxy alone so OIDC integration, secret-key rotation, and audit posture bake for one release cycle before any MCP traffic hits.

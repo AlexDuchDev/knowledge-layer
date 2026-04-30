@@ -51,6 +51,8 @@ import (
 	"github.com/knowledgelayer/api/internal/knowledge_jobs"
 	"github.com/knowledgelayer/api/internal/llm"
 	auditops "github.com/knowledgelayer/api/internal/modules/audit_ops/app"
+	klmcp "github.com/knowledgelayer/api/internal/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/knowledgelayer/api/internal/oauth_proxy"
 	"github.com/knowledgelayer/api/internal/onboarding"
 	"github.com/knowledgelayer/api/internal/opensearch"
@@ -110,6 +112,9 @@ type Deps struct {
 	// OAuth 2.1 proxy fronting the operator's OIDC issuer (v0.5.0). Nil
 	// when OAUTH_PROXY_ENABLED=false; routes 404 in that case.
 	OAuthProxy *oauth_proxy.Server
+	// MCP server (v0.5.1). Nil when MCP_ENABLED=false. httpserver.Mount
+	// passes it (with the OAuth proxy as bearer verifier) to klmcp.Mount.
+	MCPServer *mcpserver.MCPServer
 }
 
 func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
@@ -311,6 +316,22 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		}
 	}
 
+	// MCP server (v0.5.1). Hardening guarantees MCPEnabled implies
+	// OAuthProxyEnabled, but if the proxy init failed (oauthSrv stayed nil)
+	// in non-prod, MCP also stays nil — handlers expect a working bearer
+	// verifier and there's no point spinning up a dead endpoint.
+	var mcpSrv *mcpserver.MCPServer
+	if cfg.MCPEnabled && oauthSrv != nil {
+		mcpSrv, _ = klmcp.New(klmcp.Deps{
+			Access:     access,
+			Search:     searchSvc,
+			Retrieval:  retrieval,
+			Entities:   entities,
+			ServerName: "knowledge-layer-mcp",
+			ServerVer:  cfg.BuildVersion,
+		})
+	}
+
 	return &Deps{
 		Pool:                  pool,
 		Identity:              identity_access.NewRepo(pool),
@@ -349,5 +370,6 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		Cache:                 l1,
 		Invalidator:           invalidator,
 		OAuthProxy:            oauthSrv,
+		MCPServer:             mcpSrv,
 	}, nil
 }

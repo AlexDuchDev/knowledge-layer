@@ -62,6 +62,26 @@ Stateless OAuth proxy fronting an operator-supplied OIDC issuer. Off by default.
 | `OAUTH_PROXY_ISSUER` | Optional override for the proxy's issuer URL in `.well-known` (default `APP_PUBLIC_URL`). |
 | `OAUTH_PROXY_CALLBACK` | Optional override for `/oauth/callback` (default `${OAUTH_PROXY_ISSUER}/oauth/callback`). |
 
+## MCP endpoint (API, v0.5.1)
+
+Mounts `/mcp` (Model Context Protocol streamable HTTP transport) with a small initial tool set: `kl_search`, `kl_ask_global`, `kl_get_entity`. Requires `OAUTH_PROXY_ENABLED=true` — bearer auth flows through the proxy and every tool call routes through `AccessEvaluator`. See [ADR-0015](adr/0015-oauth-proxy-and-mcp-bridge.md).
+
+| Variable | Description |
+|----------|-------------|
+| `MCP_ENABLED` | `true` to mount `/mcp` (default `false`). Startup fails when set without `OAUTH_PROXY_ENABLED=true`. |
+
+Operator example (Claude Desktop config):
+
+```json
+{
+  "mcpServers": {
+    "knowledge-layer": {
+      "url": "https://kl.example.com/mcp"
+    }
+  }
+}
+```
+
 ## L1 cache (API, v0.4.0)
 
 In-process BigCache for hot read paths. Off by default. Enable only on the API container — workers do not need it. The cache is **principal-scoped** (every key carries the requesting user) and invalidates on `entity.published`, `role.granted`, `policy.updated`, and `feed.config_patched` events. `/effective-access` cache-hit responses are at most `CACHE_L1_TTL_SECONDS` stale; **backend authorization decisions always run through `AccessEvaluator` regardless** — the cache controls UI affordances, not authz.

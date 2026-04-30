@@ -2,7 +2,14 @@
 
 ## Status
 
-**Accepted (2026-04-30).** Initial scope: OAuth proxy alone (v0.5.0). Promoted to "OAuth + MCP" when the v0.5.1 MCP endpoint lands and consumes the proxy's bearers.
+**Accepted (2026-04-30).** v0.5.0 shipped the OAuth proxy alone. v0.5.1 adds the MCP endpoint consuming the proxy's bearers. The contract documented here covers both.
+
+### v0.5.1 implementation notes
+
+- `apps/api/internal/mcp/` — three initial tools: `kl_search`, `kl_ask_global`, `kl_get_entity`. All registered through `withAccessGuard`. `TestNew_allToolsAccessGuarded` is the static contract test that prevents regression: it iterates the registry and asserts every handler short-circuits on a deny decision.
+- Bearer middleware runs before the MCP handler. Reads `Authorization: Bearer X`, calls `oauth_proxy.Server.VerifyBearer`, stashes the principal UUID via `mcp.WithPrincipal(ctx, ...)`. The access guard reads it back from context for `EvaluateInput.PrincipalID`.
+- Transport is `mcp-go`'s streamable HTTP. Single endpoint at `POST /mcp` (and `GET` for SSE notifications when supported).
+- Audit trail still stderr-only in v0.5.1 (`oauth.token.issued`, `oauth.client.registered`). Promoted to `audit_events` rows in a follow-up patch when the audit reads find broad operator interest.
 
 ## Context
 

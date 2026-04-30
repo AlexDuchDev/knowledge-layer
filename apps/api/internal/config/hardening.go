@@ -148,6 +148,14 @@ func ValidateAPI(cfg Config) error {
 			return fmt.Errorf("OIDC_SUB_COLUMN must be 'email' or 'external_idp_subject' (got %q)", cfg.OIDCSubColumn)
 		}
 	}
+	// MCP endpoint (v0.5.1) — must be paired with the OAuth proxy. Bearer
+	// auth on /mcp routes through oauth_proxy.Server.VerifyBearer; without
+	// the proxy enabled there's no way to issue a valid token, so the
+	// endpoint would reject every request. Fail at startup with a clear
+	// message rather than ship a broken endpoint.
+	if cfg.MCPEnabled && !cfg.OAuthProxyEnabled {
+		return fmt.Errorf("MCP_ENABLED=true requires OAUTH_PROXY_ENABLED=true (the /mcp endpoint is bearer-gated by the proxy)")
+	}
 	return nil
 }
 

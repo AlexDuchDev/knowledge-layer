@@ -64,6 +64,10 @@ type Config struct {
 	OIDCSubColumn      string // users-table column for OIDC sub matching: "email" (default) or "external_idp_subject"
 	OAuthProxyIssuer   string // proxy's own issuer URL for .well-known (defaults to APP_PUBLIC_URL)
 	OAuthProxyCallback string // proxy's /oauth/callback URL (defaults to ${OAuthProxyIssuer}/oauth/callback)
+	// MCP endpoint (v0.5.1). Off by default. When MCP_ENABLED=true the
+	// /mcp route is mounted and bearer-protected via OAuth proxy. Hardening
+	// rejects MCP_ENABLED=true without OAUTH_PROXY_ENABLED=true.
+	MCPEnabled bool
 }
 
 func Load() Config {
@@ -118,6 +122,7 @@ func Load() Config {
 		OIDCSubColumn:                  strings.ToLower(strings.TrimSpace(getenv("OIDC_SUB_COLUMN", "email"))),
 		OAuthProxyIssuer:               strings.TrimRight(getenv("OAUTH_PROXY_ISSUER", ""), "/"),
 		OAuthProxyCallback:             strings.TrimSpace(getenv("OAUTH_PROXY_CALLBACK", "")),
+		MCPEnabled:                     strings.EqualFold(getenv("MCP_ENABLED", "false"), "true") || getenv("MCP_ENABLED", "") == "1",
 	}
 }
 

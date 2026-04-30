@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/knowledgelayer/api/internal/app"
 	"github.com/knowledgelayer/api/internal/config"
+	klmcp "github.com/knowledgelayer/api/internal/mcp"
 )
 
 // Mount wires HTTP routes. Transport stays thin: handlers delegate to app.Deps services.
@@ -22,6 +23,14 @@ func Mount(f *fiber.App, d *app.Deps, cfgOpt ...config.Config) {
 	// endpoint stays public as required.
 	if d.OAuthProxy != nil {
 		d.OAuthProxy.Mount(f)
+	}
+
+	// MCP endpoint (v0.5.1) — bearer-protected via OAuth proxy. Hardening
+	// guarantees both are present together when MCP_ENABLED=true; this
+	// nil-guard handles the local-dev path where MCP is on but the IDP
+	// failed to discover and oauthSrv stayed nil.
+	if d.MCPServer != nil && d.OAuthProxy != nil {
+		klmcp.Mount(f, d.MCPServer, d.OAuthProxy)
 	}
 
 	mountHealthAndOps(f, d, cfg)
