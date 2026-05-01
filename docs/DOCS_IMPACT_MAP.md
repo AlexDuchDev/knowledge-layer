@@ -73,6 +73,38 @@ Use with [DOCS_MAINTENANCE_POLICY.md](DOCS_MAINTENANCE_POLICY.md) and [DOCS_UPDA
 | `apps/api/internal/modules/audit_ops/` | Same |
 | `apps/api/internal/ai/privacy/vault_*.go` | [PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md), [OPERATIONS.md](OPERATIONS.md) (vault.* audit events) |
 
+### L1 cache (v0.4.0+)
+
+| Code paths (primary) | Documentation to review/update |
+|----------------------|--------------------------------|
+| `apps/api/internal/cache/` | [PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md) §12, [CONFIG_ENV.md](CONFIG_ENV.md), [`.env.example`](../.env.example) |
+| Hot-read handlers (`/domains`, `/users/:id/effective-access`, `/search`, `/knowledge-jobs/engine-metadata`) in `routes_register.go` | [PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md) §12 (staleness window for `/effective-access`) |
+| Invalidation hooks (entity publish, role grant, policy update, feed config patch) | [PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md) §12 |
+
+### OAuth proxy + MCP (v0.5.0 / v0.5.1)
+
+| Code paths (primary) | Documentation to review/update |
+|----------------------|--------------------------------|
+| `apps/api/internal/oauth_proxy/` | [adr/0015-oauth-proxy-and-mcp-bridge.md](adr/0015-oauth-proxy-and-mcp-bridge.md), [PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md) §13, [SECRET_ROTATION.md](SECRET_ROTATION.md) §9–10, [CONFIG_ENV.md](CONFIG_ENV.md), [operations/mcp.md](operations/mcp.md) |
+| `apps/api/internal/mcp/` | [adr/0015-oauth-proxy-and-mcp-bridge.md](adr/0015-oauth-proxy-and-mcp-bridge.md), [PRODUCTION_HARDENING.md](PRODUCTION_HARDENING.md) §14, [operations/mcp.md](operations/mcp.md), [CONFIG_ENV.md](CONFIG_ENV.md) |
+| `apps/api/internal/db/migrations/000043_oauth_clients.*` | [UPGRADE_AND_ROLLBACK.md](UPGRADE_AND_ROLLBACK.md) §9 |
+
+### entity_summarize knowledge job + kltools CLI (v0.4.0)
+
+| Code paths (primary) | Documentation to review/update |
+|----------------------|--------------------------------|
+| `apps/api/internal/knowledge_jobs/entity_summarize.go` | [KNOWLEDGE_JOBS.md](KNOWLEDGE_JOBS.md), [operations/kltools.md](operations/kltools.md) |
+| `apps/api/internal/ai/prompts/templates/entity_summarize.v1.json` | If contract changes (length, structure), bump to .v2 and update [operations/kltools.md](operations/kltools.md) |
+| `apps/api/internal/db/migrations/000042_entity_summarize_projection.*` | [UPGRADE_AND_ROLLBACK.md](UPGRADE_AND_ROLLBACK.md) §9 |
+| `apps/api/cmd/kltools/` | [operations/kltools.md](operations/kltools.md), [Dockerfile.api](../Dockerfile.api) (binary copy line) |
+
+### OpenAPI v3 generic connector (v0.6.0)
+
+| Code paths (primary) | Documentation to review/update |
+|----------------------|--------------------------------|
+| `apps/api/internal/ingestion_connectors/adapters/openapi_v3/` | [adr/0016-openapi-v3-generic-connector.md](adr/0016-openapi-v3-generic-connector.md), [CONNECTOR_CAPABILITY_MATRIX.md](CONNECTOR_CAPABILITY_MATRIX.md), [CONFIG_ENV.md](CONFIG_ENV.md), [`.env.example`](../.env.example) |
+| `apps/api/internal/db/migrations/000044_openapi_v3_connector.*` | [UPGRADE_AND_ROLLBACK.md](UPGRADE_AND_ROLLBACK.md) §9, [CONNECTOR_CAPABILITY_MATRIX.md](CONNECTOR_CAPABILITY_MATRIX.md) |
+
 ### Cross-cutting HTTP and config
 
 | Code paths (primary) | Documentation to review/update |

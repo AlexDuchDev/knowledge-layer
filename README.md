@@ -28,6 +28,10 @@ Unlike generic AI assistants over company docs, Knowledge Layer enforces **permi
 - **Knowledge jobs** engine for digests, sync helpers, and scheduled work
 - **Control plane** for roles, scenarios, jobs, presets, and onboarding
 - **Auditability** and operational hooks for production use
+- **MCP endpoint** (v0.5.1+, opt-in) — Claude Desktop / Cursor / IDE plugins consume KL tools after OIDC auth via the built-in OAuth 2.1 proxy. Every tool call routes through `AccessEvaluator`. See [docs/operations/mcp.md](docs/operations/mcp.md).
+- **L1 in-process cache** (v0.4.0+, opt-in) for hot reads — `/domains`, `/users/:id/effective-access`, `/search`, `/knowledge-jobs/engine-metadata`. Principal-scoped keys, event-driven invalidation. See [docs/PRODUCTION_HARDENING.md §12](docs/PRODUCTION_HARDENING.md).
+- **`kltools` CLI** (v0.4.0+) shipping inside the API image — `summarize`, `reindex`, `schema-info`. See [docs/operations/kltools.md](docs/operations/kltools.md).
+- **Generic OpenAPI v3 connector** (v0.6.0+) — add REST-API source feeds via configuration instead of per-vendor Go code. See [docs/adr/0016-openapi-v3-generic-connector.md](docs/adr/0016-openapi-v3-generic-connector.md).
 
 ## High-level architecture
 

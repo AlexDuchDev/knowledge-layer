@@ -25,6 +25,8 @@ How to rotate every secret Knowledge Layer holds without dropping traffic. Read 
 | `TELEGRAM_BOT_TOKEN`, `MATTERMOST_OUTGOING_WEBHOOK_TOKEN` | API + jobworker env (Second Brain only) | Outbound delivery fails until env updated. |
 | `BLOBSTORE_S3_*` | API + connectorworker env | New writes/reads fail; rotate provider-side then env. |
 | `BOOTSTRAP_ADMIN_PASSWORD` | API env (one-shot) | Only consumed at first-run auto-bootstrap; remove after the admin sets a real password via the UI. |
+| `OAUTH_SECRET_KEY` (v0.5.0+) | API env | Signs OAuth `state` payloads + JWT bearers issued by the proxy. Rotation **invalidates every in-flight bearer** — MCP clients re-authorize via IDP; in-flight `/oauth/authorize` flows fail with `state expired` and the user retries. |
+| `OIDC_CLIENT_SECRET` (v0.5.0+) | API env | The proxy's secret at the operator's IDP. Coordinate rotation with IDP-side update; pre-flight by setting both old + new in IDP-side config when supported. |
 
 ## 2. `SESSION_SECRET`
 
@@ -192,13 +194,76 @@ Mandatory:
 - [ ] One end-to-end Ask returns an answer with citations (validates LLM key + vault).
 - [ ] `audit_events` shows expected types from the verification Ask (`vault.placeholder_stored`, `vault.placeholder_decrypted`, `vault.rehydration_applied` — Phase 1.1.3 hardening).
 
-## 9. Rotation cadence (recommended)
+## 9. `OAUTH_SECRET_KEY` (v0.5.0+)
+
+Signs the OAuth proxy's `state` payload (HMAC-SHA256) and JWT bearers (HS256). Rotation is **destructive** to all in-flight authorizations and bearers; there is no dual-key window in v0.5.x.
+
+### When to rotate
+
+- Suspected exposure of the key (logs, error reports, container snapshot).
+- Force-revoke every issued MCP bearer in one shot (faster than waiting for 1-h JWT expiration).
+- Annual hygiene rotation.
+
+### Procedure
+
+```bash
+# 1. Generate a new ≥32-byte key (hex or raw is fine).
+NEW_KEY=$(openssl rand -hex 32)
+echo "$NEW_KEY"
+
+# 2. Update env (Kubernetes example).
+kubectl set env deploy/knowledge-layer-api OAUTH_SECRET_KEY=$NEW_KEY
+
+# 3. Roll the API. MCP clients receive 401 on next request, re-auth via IDP.
+kubectl rollout restart deploy/knowledge-layer-api
+
+# 4. Verify the proxy still serves discovery.
+curl -s https://kl.example.com/.well-known/oauth-authorization-server | jq '.issuer'
+```
+
+### What breaks immediately
+
+- **Every active MCP bearer** — `VerifyBearer` fails with `invalid bearer` (401). Claude Desktop / Cursor silently re-runs the auth-code flow on the next call; user sees a brief "reconnecting" then back to normal. If the IDP cookie is still fresh (typical), no human interaction.
+- **`/oauth/authorize` flows in flight** — anyone mid-auth at the IDP receives `state expired` on callback. They retry by clicking "log in" again.
+
+### What does NOT break
+
+- `oauth_clients` rows — clients stay registered. Only the bearers they hold expire.
+- IDP-side state — operator does **not** need to coordinate with the IDP for this rotation (unlike `OIDC_CLIENT_SECRET`).
+- The OAuth proxy's discovery + register endpoints — they don't sign anything with this key.
+
+## 10. `OIDC_CLIENT_SECRET` (v0.5.0+)
+
+The proxy's secret at the operator's IDP. Rotation requires coordination on **both sides** — IDP-side allow new secret, then KL-side env update, then IDP-side revoke old.
+
+```bash
+# 1. In the IDP admin console (Keycloak / Auth0 / Okta / Dex):
+#    Generate a new client secret for the knowledge-layer client. Most IDPs
+#    let you keep the old one valid for a grace window; if not, plan a
+#    sub-second simultaneous flip with the next step.
+
+# 2. Update KL env to the new secret.
+kubectl set env deploy/knowledge-layer-api OIDC_CLIENT_SECRET=<new-secret>
+kubectl rollout restart deploy/knowledge-layer-api
+
+# 3. Verify the proxy can still complete the auth-code exchange.
+#    Watch a real MCP client log in OR use a curl probe of /oauth/authorize
+#    and walk the IDP redirect flow manually.
+
+# 4. In the IDP, revoke the old client secret.
+```
+
+If your IDP doesn't support a dual-secret window, schedule a brief maintenance window so MCP clients aren't mid-flow during the flip.
+
+## 11. Rotation cadence (recommended)
 
 | Secret | Cadence |
 |---|---|
 | `SESSION_SECRET` | Quarterly, plus immediately after any suspected leak. |
 | `OPS_AUTH_TOKEN` | Quarterly. |
 | `AI_PRIVACY_VAULT_KEY` | Annually + immediately after compromise. Plan the maintenance window per Path A above. |
+| `OAUTH_SECRET_KEY` (v0.5.0+) | Annually + immediately after compromise. |
+| `OIDC_CLIENT_SECRET` (v0.5.0+) | Per IDP policy (often annually). Coordinate with IDP-side. |
 | LLM API keys | Quarterly + immediately if the key surface (logs, error reports) might have leaked. |
 | Connector OAuth client secrets | Per provider's policy (Google/Microsoft typically yearly). |
 | Per-feed Slack `signing_secret` | When the Slack app owner rotates; no schedule otherwise. |

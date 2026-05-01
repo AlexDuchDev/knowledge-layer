@@ -23,6 +23,10 @@
 | `hubspot` | Yes | `hubspot_object` (kind `hubspot_note` exists for future payloads) | No | Same. |
 | `zendesk` | Yes | `zendesk_ticket`, `zendesk_comment` | No | Same. |
 | `microsoft_365` | Yes | e.g. `m365_mail_message`, `m365_teams_message`, `m365_calendar_event`, file metadata kinds | No | Same. |
+| `mattermost` | Yes | `mattermost_post` | **Yes** | Webhook adapter (`HandleWebhook` contract); per-feed `outgoing_webhook_token` for inbound. |
+| `http_url` | Yes | `http_url_page` | **Yes** | Single-URL fetch; per-feed config minimal — URL goes in `external_ref`. |
+| `filesystem` | Yes | `filesystem_file` | **Yes** | Reads from mounted `/data` directory; relative path in `external_ref`. |
+| `openapi_v3` (v0.6.0) | Yes | varies — chosen by operator from `connector_config_json.record_type` | **Yes** (the configured `record_type` is one of the 14 known types) | Generic adapter for any REST API with an OpenAPI 3.x spec. v0.6.0 constraints: bearer auth only, offset/limit pagination only, JSONPath strict-mode (no `?(...)` filters), 5MB spec cap, `record_type` closed enum from [`chunks/extract.go`](../apps/api/internal/chunks/extract.go). See [ADR-0016](./adr/0016-openapi-v3-generic-connector.md). |
 
 **Entity / search path:** After normalization, families differ in how aggressively they populate `normalized_records`, entity projections, and search indexes. Treat **“sync works”** and **“normalizer runs”** as independent gates; absence of a worker normalizer means **raw preservation without structured normalized rows** for that artifact type (see [LIMITATIONS.md](./LIMITATIONS.md) connector row).
 

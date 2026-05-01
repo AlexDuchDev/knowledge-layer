@@ -109,6 +109,9 @@ httpserver  →  app  →  domain modules  →  platform/  →  shared/
 | [`opensearch/`](opensearch/) | OpenSearch client + health probe. |
 | [`instancebootstrap/`](instancebootstrap/) | First-run domain creation; `/bootstrap` route + auto-bootstrap from env. |
 | [`integration/`](integration/) | E2E integration tests gated by `E2E_DB=1` + `DATABASE_URL`. |
+| [`cache/`](cache/) | L1 BigCache + invalidator (v0.4.0). Wraps `eko/gocache/v4`. Off by default; enabled via `CACHE_L1_ENABLED=true`. Principal-scoped keys; event-driven flush. See [package README](cache/README.md). |
+| [`oauth_proxy/`](oauth_proxy/) | OAuth 2.1 authorization-server proxy fronting an operator-supplied OIDC issuer (v0.5.0). Off by default. Mounts `/.well-known` + `/oauth/{authorize,token,register,callback}`. See [ADR-0015](../../../docs/adr/0015-oauth-proxy-and-mcp-bridge.md), [package README](oauth_proxy/README.md). |
+| [`mcp/`](mcp/) | Model Context Protocol endpoint mounted at `/mcp` (v0.5.1). Tools wrapped through `withAccessGuard` (mandatory contract enforced by `TestNew_allToolsAccessGuarded`). Bearer middleware verifies via `oauth_proxy.Server.VerifyBearer`. See [package README](mcp/README.md). |
 
 ## Where to add new code
 
@@ -120,6 +123,10 @@ httpserver  →  app  →  domain modules  →  platform/  →  shared/
 | A new AI-using flow | Always go through `ai/privacy.PrivacyGateway.InvokeOpenAI`. Adding a prompt? Drop a JSON file under `internal/ai/prompts/templates/<id>.<version>.json` and reference it via `prompts.Get(id)` — set `InvokeInput.PromptTemplateID` to the id so the trace records it. |
 | A new audit event type | `audit.WriteInput{ EventType: "your.event_type", … }`. Register in [docs/OPERATIONS.md](../../../docs/OPERATIONS.md) audit-events table. |
 | A new metric | `internal/platform/metrics/metrics.go` — register a collector or call an existing recorder (`ObserveJobRun`, …). Don't create per-package private registries. |
+| A new MCP tool | `internal/mcp/server.go` — construct via `newGuardedTool(name, desc, action, resourceType, schema, fn)` then append to the slice in `New(deps)`. **Never** call `srv.AddTool` directly from an unwrapped handler — `TestNew_allToolsAccessGuarded` catches this in CI. |
+| A new cached read endpoint | Add a typed key constructor in `internal/cache/keys.go` (must embed principal if per-user). Read-through `d.Cache.Get` / `Set` in the handler; identify the invalidation events that should drop the new key and add them to `internal/cache/invalidation.go` (typed methods only). |
+| A new OAuth proxy endpoint | `internal/oauth_proxy/server.go` — register in `Mount`. RFC-required public endpoints add to `PublicPaths()` for the routing allow-list. Don't loosen redirect_uri matching. |
+| A new operator CLI subcommand | New file under `apps/api/cmd/kltools/` next to `summarize.go` / `reindex.go` / `schema_info.go`. Dispatch from `main.go`. Write subcommands MUST default to dry-run (require `--yes`). Pool is capped at 4 connections. Update [docs/operations/kltools.md](../../../docs/operations/kltools.md). |
 
 ## Things to avoid
 

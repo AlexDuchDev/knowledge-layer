@@ -87,3 +87,38 @@ Use the full operator list in [PRODUCTION_GO_LIVE_CHECKLIST.md](PRODUCTION_GO_LI
 `CACHE_L1_ENABLED=true` enables an in-process BigCache for hot read paths (`/domains`, `/users/:id/effective-access`, `/search` keyword, `/knowledge-jobs/engine-metadata`). The cache is principal-scoped — every key embeds the requesting user — and is invalidated on `entity.published`, `role.granted`, `policy.updated`, `feed.config_patched`. **Authorization decisions are not cached**: every authz call still runs through `AccessEvaluator.Evaluate`. The cache only stores already-decided responses for one TTL window (default 60s).
 
 The `/users/:id/effective-access` endpoint is the most subtle: an operator who just revoked a role for a user may see the old "allowed" UI for up to TTL seconds. The user themselves is not at risk — the next privileged operation runs `AccessEvaluator` synchronously and is denied immediately. To minimise the window, lower `CACHE_L1_TTL_SECONDS`. To eliminate it, leave `CACHE_L1_ENABLED=false`.
+
+## 13. OAuth 2.1 proxy (v0.5.0+, optional)
+
+`OAUTH_PROXY_ENABLED=true` mounts `/.well-known/oauth-authorization-server` and `/oauth/{authorize,token,register,callback}` to front an operator-supplied OIDC issuer. The proxy is a prerequisite for the v0.5.1 MCP endpoint. Per [ADR-0015](adr/0015-oauth-proxy-and-mcp-bridge.md) the proxy preserves the single-tenant invariant (no tenant claim in tokens) and the AccessEvaluator-mandatory contract (every issued bearer maps to a real `users.id`; admin bypass tokens are rejected).
+
+| Rule | Enforcement |
+|------|-------------|
+| `OAUTH_SECRET_KEY` ≥ 32 bytes | [`ValidateAPI`](../apps/api/internal/config/hardening.go) rejects shorter keys at startup. Signs OAuth state HMAC + JWT bearers. |
+| `OIDC_ISSUER_URL` reachable | OIDC discovery runs at startup. Production: failure aborts the proxy. Local/staging: logs and continues without OAuth. |
+| `OIDC_CLIENT_ID` set | Required even when the IDP allows public clients — KL acts as a confidential client at the IDP. |
+| `OIDC_CLIENT_SECRET` set in production | `ValidateAPI` rejects empty `OIDC_CLIENT_SECRET` when `APP_ENV=production`. Public/PKCE-only flows are an MCP-side concern; our proxy is confidential at the IDP. |
+| `OIDC_SUB_COLUMN` is `email` or `external_idp_subject` | Anything else rejected. Default `email`. Operators with opaque OIDC subjects should add the column and set this to `external_idp_subject`. |
+| `redirect_uris` allow-list per dynamic-registered client | `Server.callback` rejects callbacks whose `redirect_uri` doesn't match an `oauth_clients.redirect_uris` entry. No path-prefix matching. |
+
+**Single-instance assumption.** Auth codes live 2 minutes in `sync.Map`. Multi-pod deployments need sticky LB on `/oauth/*` so the callback hits the same pod that issued the code. ADR-0014 documents the rationale.
+
+**Token rotation.** JWTs live 1 h. To force-revoke every in-flight bearer, rotate `OAUTH_SECRET_KEY` ([SECRET_ROTATION.md §9](SECRET_ROTATION.md)). Per-client revocation: `UPDATE oauth_clients SET revoked_at=now() WHERE client_id=...`.
+
+**Audit observability.** `oauth.client.registered` and `oauth.token.issued` log to **stderr** in v0.5.x — promotion to `audit_events` is a v0.5.x point release. For now, parse container logs.
+
+## 14. MCP endpoint (v0.5.1+, optional)
+
+`MCP_ENABLED=true` mounts `/mcp` (Model Context Protocol streamable HTTP). External AI clients (Claude Desktop, Cursor) speak MCP after authenticating through the OAuth proxy.
+
+| Rule | Enforcement |
+|------|-------------|
+| `MCP_ENABLED=true` requires `OAUTH_PROXY_ENABLED=true` | `ValidateAPI` rejects the combination. The /mcp endpoint cannot validate bearers without the proxy. |
+| Every tool wrapped in `withAccessGuard` | Static-grep contract test [`TestNew_allToolsAccessGuarded`](../apps/api/internal/mcp/server_test.go) iterates the registry; CI fails if a new tool bypasses. No admin bypass. |
+| Bearer absent → 401 with `WWW-Authenticate: Bearer realm="mcp"` | [`bearerMiddleware`](../apps/api/internal/mcp/route.go). |
+| Bearer present but `sub` doesn't resolve to a `users` row → 401 (not 403) | `TokenBridge.Resolve` rejects with explicit "no KL user matches sub" error. The IDP authenticated *someone* but they have no Knowledge Layer identity. |
+| Per-tool action / resource_type passed to AccessEvaluator | `kl_search`, `kl_ask_global`, `kl_get_entity` all run as `(action="view", resource_type="entity")`. Future tools must declare both. |
+
+**Tool surface.** v0.5.1 ships read-only tools. Mutation tools (publish, patch) come later as the access-guard pattern proves itself in production.
+
+See [`docs/operations/mcp.md`](operations/mcp.md) for the full operator guide.

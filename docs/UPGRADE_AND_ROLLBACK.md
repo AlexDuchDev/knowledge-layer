@@ -213,6 +213,39 @@ Recommended:
 | Worker startup loops on `migrate: dirty version N` | Previous run aborted mid-migration. | `pg_dump` for safety, then on a maintenance window: `migrate -database "$DATABASE_URL" -path apps/api/internal/db/migrations force N` (current version); restart. |
 | Asynq queue depth growing without bound | Worker stuck (DB lock, exhausted LLM key, OpenSearch down). | Check worker `/ops/health` `last_processed_by_task`. Restart worker; if persistent, check `/ops/failed-runs`. |
 | `/control-plane/setup/session/[id]` 404 after upgrade from <2026-04-25 | Phase 2.1.5 removed the rewrite to legacy `/admin/setup/[sessionId]`. | Re-bookmark to canonical CP URL; sessions still load by id. |
+| API fails startup with `MCP_ENABLED=true requires OAUTH_PROXY_ENABLED=true` (v0.5.1+) | MCP endpoint is bearer-gated; without the proxy there's no way to issue valid tokens. | Either set `OAUTH_PROXY_ENABLED=true` + the OIDC keys ([CONFIG_ENV.md](CONFIG_ENV.md)), or set `MCP_ENABLED=false` and roll back. |
+| API fails startup with `OAUTH_SECRET_KEY must be at least 32 bytes` (v0.5.0+) | OAuth proxy enabled but key missing/short. | Set ≥32 bytes (`openssl rand -hex 32`); restart. |
+| MCP clients receive 401 every request after rotating `OAUTH_SECRET_KEY` (v0.5.0+) | Documented behaviour — rotation invalidates every issued JWT. | Operator: no action; Claude Desktop / Cursor silently re-auth via IDP on next call. |
+
+## 9. Per-migration upgrade notes
+
+Subset of recent migrations with operator-relevant nuances. The full list lives at `apps/api/internal/db/migrations/`.
+
+### 000041 — chunks_normalized_record_source (v0.3.0)
+
+- Adds polymorphic `chunks` rooted in either `entities` or `normalized_records`. CHECK constraint enforces exactly-one-source per row.
+- Adds `normalized_records.chunks_rebuilt_at` column for the connectorworker's 30-s backfill loop.
+- **Forward-compatible.** v0.2.x binaries still see only entity-rooted chunks (the new column NULL means "pending"); v0.3.0+ binaries fill it.
+- **Rollback:** drops every normalized_record-rooted chunk and the new column. Operators who already produced chat / docs / meeting chunks under v0.3.0 must accept loss of those embeddings — re-ingestion or `kltools reindex --all-pending-records --yes` rebuilds them after the next forward upgrade.
+
+### 000042 — entity_summarize_projection (v0.4.0)
+
+- Adds `entity_search_projection.synthesized_summary TEXT` + `synthesized_at TIMESTAMPTZ`. Both nullable; existing rows untouched.
+- Adds partial index for the entity_summarize backfill query.
+- **Forward-compatible.** v0.3.x binaries ignore the new columns. v0.4.0+ binaries populate them only when `entity_summarize` jobs run via API or `kltools summarize`.
+- **Rollback:** drops the columns. No data loss outside the synthesized summaries themselves; on next forward upgrade, re-run `kltools summarize --yes` to rebuild.
+
+### 000043 — oauth_clients (v0.5.0)
+
+- Adds `oauth_clients` table for RFC 7591 dynamic-registration (one row per registered MCP client). `client_secret_hash` is bcrypt; secret never stored plaintext.
+- **Forward-compatible.** v0.4.x binaries don't read this table; it just sits empty.
+- **Rollback:** drops the table. Registered MCP clients lose their entry and must re-register on next forward upgrade. JWT bearers issued before rollback continue to work for their 1-h lifetime against any v0.5.0+ replica that still holds the original `OAUTH_SECRET_KEY`.
+
+### 000044 — openapi_v3_connector (v0.6.0)
+
+- INSERT ONLY — no DDL. Adds one row to `connectors` for the new `openapi_v3` connector type at id `…0014`.
+- **Forward-compatible.** v0.5.x binaries don't have the adapter, so any feed pointed at this connector_id returns "unknown connector type" at activation. v0.6.0+ binaries register the adapter and the feed becomes valid.
+- **Rollback:** deletes the row. Existing source_feeds with `connector_id` pointing at it become orphaned (validation fails); operator must `archive` or `delete` them before the rollback is clean.
 
 ## Related
 
