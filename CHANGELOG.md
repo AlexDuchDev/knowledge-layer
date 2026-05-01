@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-01
+
+Adds the **manual upload** connector — operators (and any user with manage-feed permission) can paste text, upload files, fetch a URL, or grab a YouTube transcript directly into a governed source feed. Each user-created **collection** is one `source_feed` against the new `manual` connector type. Uploads flow through the existing v0.3.0 chunks → embeddings pipeline; nothing in retrieval or AccessEvaluator changes.
+
+### Added
+
+- **`manual` connector type** at id `20000000-0000-0000-0000-000000000015` (migration 000045). One connector row, `auth_mode='none'`, `status='active'` from day zero — collections need no per-feed credentials.
+- **Adapter** [`apps/api/internal/ingestion_connectors/adapters/manual/manual.go`](apps/api/internal/ingestion_connectors/adapters/manual/manual.go). `SyncFeed` is a no-op; uploads arrive via HTTP, not polling. `ValidateSourceFeedConfig` enforces the `collection.label` requirement.
+- **Service surface** [`apps/api/internal/ingestion_connectors/manual.go`](apps/api/internal/ingestion_connectors/manual.go) — `CreateManualCollection`, `ListManualCollections`, `GetManualCollection`, `ListManualArtifacts`, `PatchManualCollection`, `DeleteManualArtifact`, `RenormalizeManualArtifact`, `SearchManualCollection`, `IngestManualText`/`File`/`URL`/`YouTube`. All four ingest paths produce `docs_page`-shaped normalized records via `Service.PersistNormalizedRecord` (the v0.3.0 helper) — chunks + embeddings hook fires uniformly.
+- **Extractors** [`manual_extract.go`](apps/api/internal/ingestion_connectors/manual_extract.go):
+  - PDF via `github.com/ledongthuc/pdf` (skips broken pages, surfaces `pdf contained no extractable text` warning when scanned-without-OCR).
+  - DOCX via `github.com/nguyenthenguyen/docx` (path-based loader through a temp file).
+  - HTML via `golang.org/x/net/html` (skips `<script>` / `<style>`, captures `<title>`).
+  - Markdown / CSV / JSON / plain text passes through verbatim.
+  - Unknown MIME stored without text + warning so the operator sees the artifact in the UI.
+- **YouTube extractor** [`manual_youtube.go`](apps/api/internal/ingestion_connectors/manual_youtube.go) via `github.com/kkdai/youtube/v2`. Caption-track preference: manual EN → manual any → auto-generated (Kind=`asr`). Missing tracks → metadata-only artifact with warning, never an error.
+- **HTTP routes** [`apps/api/internal/httpserver/manual_routes.go`](apps/api/internal/httpserver/manual_routes.go) — 11 endpoints under `/api/manual/*`:
+  - `POST /collections`, `GET /collections`, `GET /collections/:id`, `PATCH /collections/:id`, `DELETE /collections/:id`
+  - `GET /collections/:id/artifacts`, `DELETE /collections/:id/artifacts/:artifactId`, `POST /collections/:id/artifacts/:artifactId/renormalize`
+  - `POST /collections/:id/{text,file,url,youtube}` — four upload kinds
+  - `POST /collections/:id/search` — fast SQL `ILIKE` over the collection's chunks
+- **Worker integration** — `ProcessQueuedRawArtifact` switch now handles `manual_text`, `manual_file`, `manual_url`, `manual_youtube`. Asynq retries pick up failed inline normalizations.
+- **Audit events** — `manual_collection.{created,updated,archived}`, `manual_artifact.{uploaded.text,uploaded.file,uploaded.url,uploaded.youtube,deleted,renormalized}`. All flow through `audit_events` like the rest.
+- **Frontend pages** — `/control-plane/sources/collections` (list + create) and `/control-plane/sources/collections/[id]` (detail + upload modal + per-artifact actions). Components in `apps/web/src/components/manual-upload/`. Sources hub links the new surface.
+- **BodyLimit raised to 64 MiB** in `apps/api/cmd/api/main.go` so multipart file uploads of up to 50 MiB (the in-handler cap, `MaxManualUploadSize`) plus headers fit. Previous 4 MiB Fiber default would 413 every non-trivial PDF before our handler saw it.
+- **Optional blob store integration** — when `BLOBSTORE_BACKEND` is configured, file uploads also persist the original bytes to the blob store; `raw_artifacts.storage_uri` is filled. Without a blob store, uploads still work (text-only retention, the `metadata_json.manual_payload.content_text` field carries the extracted prose).
+
+### Changed
+
+- **Go toolchain → 1.26.0**. Required by the upgraded module set; `apps/api/go.mod` and the workspace `go.work` both declare it. Release CI's `actions/setup-go@v5` reads `go-version-file` so it picks up the bump automatically. Operators building from source need Go 1.26.
+- **`Service` gains a `blob` field + `SetBlobStore` setter** wired in `app.NewDeps` after the blob store is constructed. Existing connectors are unaffected.
+- **Allowed-job-types default** for new manual collections includes `entity_summarize` (v0.4.0) so the new content gets summarized through the privacy gateway as soon as it's ingested.
+
+### Operations
+
+- **Per-collection search** at `POST /api/manual/collections/:id/search` is a fast SQL `ILIKE` against the collection's chunks. Use it for the collection-detail "find in this collection" UX. For broader semantic search, the existing `/api/search` and `/api/ask` endpoints already cover manual content via the standard domain-permission flow.
+- **Renormalize** lets operators rebuild chunks for a single artifact when a downstream extractor improvement lands or when the operator manually fixed `metadata_json`. Cascades through the FK chain (normalized_records → chunks → embeddings).
+- **Archive vs delete** — `DELETE /api/manual/collections/:id` archives the underlying source_feed (soft delete; status='archived'); per-artifact `DELETE` is a hard delete with FK cascade. The asymmetry is deliberate: collections may need recovery; individual artifacts are mistakes the user is consciously fixing.
+- **Dedup is on `content_hash` per feed** — re-uploading the same file or the same URL returns 200 with `deduped: true` rather than failing. The first-upload's artifact id is returned so the UI can show "this is the existing entry."
+
+### Migration & rollback
+
+Migration 000045 is INSERT-only — adds one row to `connectors`. Forward-compatible with v0.6.x binaries (which would treat the new connector_id as "unknown adapter" and reject feed activation). Rollback deletes the connector row; operators must archive manual collections first or feed activation breaks. See [docs/UPGRADE_AND_ROLLBACK.md §9](docs/UPGRADE_AND_ROLLBACK.md).
+
+## [0.6.1] — 2026-05-01
+
+Documentation-only patch closing the doc-coverage gap from v0.4.0 → v0.6.0. No code changes; container images are byte-equivalent to v0.6.0 except for embedded labels.
+
+### Added
+
+- [`docs/operations/mcp.md`](docs/operations/mcp.md) — Claude Desktop / Cursor integration guide, OAuth bearer flow walkthrough, common operator questions.
+- [`docs/operations/kltools.md`](docs/operations/kltools.md) — CLI man-page for the `summarize` / `reindex` / `schema-info` subcommands; bootstrap scenarios.
+- Per-package READMEs: [`apps/api/internal/cache/README.md`](apps/api/internal/cache/README.md), [`apps/api/internal/oauth_proxy/README.md`](apps/api/internal/oauth_proxy/README.md), [`apps/api/internal/mcp/README.md`](apps/api/internal/mcp/README.md), [`apps/api/internal/ingestion_connectors/adapters/openapi_v3/README.md`](apps/api/internal/ingestion_connectors/adapters/openapi_v3/README.md).
+
+### Changed
+
+- [`README.md`](README.md) Highlights extended with cache, MCP, kltools, OpenAPI connector.
+- [`apps/api/internal/README.md`](apps/api/internal/README.md) module map adds `cache/`, `oauth_proxy/`, `mcp/`. "Where to add new code" rows for MCP tools, cached endpoints, OAuth endpoints, kltools subcommands.
+- [`docs/PRODUCTION_HARDENING.md`](docs/PRODUCTION_HARDENING.md) §13 OAuth proxy + §14 MCP — startup validation rules, single-instance assumption, token revocation paths.
+- [`docs/SECRET_ROTATION.md`](docs/SECRET_ROTATION.md) §9 `OAUTH_SECRET_KEY` + §10 `OIDC_CLIENT_SECRET` rotation procedures + cadence table update.
+- [`docs/UPGRADE_AND_ROLLBACK.md`](docs/UPGRADE_AND_ROLLBACK.md) §9 per-migration notes for 000041..000044; new hazards table entries for MCP+OAuth startup validation errors.
+- [`docs/CONNECTOR_CAPABILITY_MATRIX.md`](docs/CONNECTOR_CAPABILITY_MATRIX.md) — adds rows for mattermost, http_url, filesystem, openapi_v3.
+- [`docs/DOCS_IMPACT_MAP.md`](docs/DOCS_IMPACT_MAP.md) — new sections for cache/, oauth_proxy/, mcp/, entity_summarize, openapi_v3, migrations 042/043/044.
+
 ## [0.6.0] — 2026-04-30
 
 Adds a generic `openapi_v3` connector type that lets operators add REST-API source feeds via configuration instead of per-vendor Go code. Adopts the spirit of Hugr's data-source model (one configurable HTTP source) while keeping Knowledge Layer's REST/connector-first surface. See [ADR-0016](docs/adr/0016-openapi-v3-generic-connector.md).

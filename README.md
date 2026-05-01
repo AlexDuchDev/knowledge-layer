@@ -32,6 +32,7 @@ Unlike generic AI assistants over company docs, Knowledge Layer enforces **permi
 - **L1 in-process cache** (v0.4.0+, opt-in) for hot reads — `/domains`, `/users/:id/effective-access`, `/search`, `/knowledge-jobs/engine-metadata`. Principal-scoped keys, event-driven invalidation. See [docs/PRODUCTION_HARDENING.md §12](docs/PRODUCTION_HARDENING.md).
 - **`kltools` CLI** (v0.4.0+) shipping inside the API image — `summarize`, `reindex`, `schema-info`. See [docs/operations/kltools.md](docs/operations/kltools.md).
 - **Generic OpenAPI v3 connector** (v0.6.0+) — add REST-API source feeds via configuration instead of per-vendor Go code. See [docs/adr/0016-openapi-v3-generic-connector.md](docs/adr/0016-openapi-v3-generic-connector.md).
+- **Manual upload** (v0.7.0+) — paste text, upload files (PDF / DOCX / HTML / Markdown / CSV / JSON / plain text up to 50 MiB), drop a URL, or pull a YouTube transcript directly into a governed source feed. Each user-created **collection** is a source_feed; uploads flow through the same chunks → embeddings pipeline as polled connectors. See [docs/operations/manual-upload.md](docs/operations/manual-upload.md).
 
 ## High-level architecture
 

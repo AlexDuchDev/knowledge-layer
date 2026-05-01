@@ -247,6 +247,14 @@ Subset of recent migrations with operator-relevant nuances. The full list lives 
 - **Forward-compatible.** v0.5.x binaries don't have the adapter, so any feed pointed at this connector_id returns "unknown connector type" at activation. v0.6.0+ binaries register the adapter and the feed becomes valid.
 - **Rollback:** deletes the row. Existing source_feeds with `connector_id` pointing at it become orphaned (validation fails); operator must `archive` or `delete` them before the rollback is clean.
 
+### 000045 — manual_connector (v0.7.0)
+
+- INSERT ONLY — no DDL. Adds one row to `connectors` for the new `manual` connector type at id `…0015`. Active from day zero (`status='active'`) since the connector needs no per-instance configuration.
+- **Forward-compatible.** v0.6.x binaries don't have the manual adapter; existing `manual` source_feeds (none in v0.6.x deployments) would be unreachable but no API surface tries to reach them. v0.7.0+ binaries register the adapter and `/api/manual/*` routes become operative.
+- **Toolchain bump:** v0.7.0 also bumps `apps/api/go.mod` and `go.work` to **Go 1.26**. Operators building from source need Go 1.26 installed. Release CI's `actions/setup-go@v5` reads `go-version-file` and installs the right version automatically; no CI yaml change needed. Container images ship a 1.26 build.
+- **Body limit:** `apps/api/cmd/api/main.go` raises Fiber's `BodyLimit` from 4 MiB (default) to 64 MiB so multipart uploads up to the in-handler 50 MiB cap fit. Other endpoints unaffected; the 64 MiB only matters when the request body actually approaches it.
+- **Rollback:** deletes the connector row. Existing manual collections (each = one source_feed) become orphaned; operator must archive them through the v0.7.0 UI **before** rollback, otherwise feed validation fails on next read.
+
 ## Related
 
 - [SELF_HOSTED.md](./SELF_HOSTED.md) — install + first run

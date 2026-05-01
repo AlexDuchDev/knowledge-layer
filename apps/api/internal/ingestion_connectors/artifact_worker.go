@@ -53,6 +53,8 @@ func (s *Service) ProcessQueuedRawArtifact(ctx context.Context, rawID uuid.UUID)
 		return s.normalizeHTTPURLPageArtifact(ctx, raw)
 	case artifactFilesystemFile:
 		return s.normalizeFilesystemFileArtifact(ctx, raw)
+	case "manual_text", "manual_file", "manual_url", "manual_youtube":
+		return s.normalizeManualArtifactFromMeta(ctx, raw)
 	default:
 		// Permanent no-op: avoid Asynq infinite retries for types without async normalizers.
 		return nil

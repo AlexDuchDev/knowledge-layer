@@ -11,6 +11,7 @@ export default function ControlPlaneSourcesHubPage() {
       crossLinks={[
         { href: "/control-plane/sources/connectors", label: "Connectors" },
         { href: "/source-feeds?from=cp", label: "Source feed wizard" },
+        { href: "/control-plane/sources/collections", label: "Collections (manual uploads)" },
         { href: "/help/getting-started", label: "Getting started" },
         { href: "/control-plane/sources/health", label: "Source health" },
         { href: "/control-plane/jobs", label: "Jobs consuming feeds" },
@@ -22,6 +23,7 @@ export default function ControlPlaneSourcesHubPage() {
         primaryAction={{ href: "/source-feeds?from=cp", label: "Open source feed wizard" }}
         secondaryActions={[
           { href: "/control-plane/sources/connectors", label: "Browse connectors" },
+          { href: "/control-plane/sources/collections", label: "Manual uploads (files / text / URL / YouTube)" },
           { href: "/help/getting-started", label: "Step-by-step guide" },
         ]}
       />

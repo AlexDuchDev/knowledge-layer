@@ -44,4 +44,5 @@ func Mount(f *fiber.App, d *app.Deps, cfgOpt ...config.Config) {
 	mountIdentityAdmin(f, d)
 	mountAuthSettingsRoutes(f, d, cfg)
 	mountAPIRoutes(f, d, cfg)
+	mountManualUploadRoutes(f, d)
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/oauth2"
 
+	"github.com/knowledgelayer/api/internal/blobstore"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/families/chat"
 )
 
@@ -56,6 +57,7 @@ type Service struct {
 	pool                 *pgxpool.Pool
 	HTTP                 *http.Client
 	Registry             *Registry
+	blob                 blobstore.BlobStore
 	gmailOAuth           *oauth2.Config
 	m365OAuth            *oauth2.Config
 	onNormalizedRecord   OnNormalizedRecordPersistedHook

@@ -105,6 +105,17 @@ Use with [DOCS_MAINTENANCE_POLICY.md](DOCS_MAINTENANCE_POLICY.md) and [DOCS_UPDA
 | `apps/api/internal/ingestion_connectors/adapters/openapi_v3/` | [adr/0016-openapi-v3-generic-connector.md](adr/0016-openapi-v3-generic-connector.md), [CONNECTOR_CAPABILITY_MATRIX.md](CONNECTOR_CAPABILITY_MATRIX.md), [CONFIG_ENV.md](CONFIG_ENV.md), [`.env.example`](../.env.example) |
 | `apps/api/internal/db/migrations/000044_openapi_v3_connector.*` | [UPGRADE_AND_ROLLBACK.md](UPGRADE_AND_ROLLBACK.md) §9, [CONNECTOR_CAPABILITY_MATRIX.md](CONNECTOR_CAPABILITY_MATRIX.md) |
 
+### Manual upload connector (v0.7.0)
+
+| Code paths (primary) | Documentation to review/update |
+|----------------------|--------------------------------|
+| `apps/api/internal/ingestion_connectors/manual.go`, `manual_extract.go`, `manual_youtube.go` | [operations/manual-upload.md](operations/manual-upload.md), [CONNECTOR_CAPABILITY_MATRIX.md](CONNECTOR_CAPABILITY_MATRIX.md) |
+| `apps/api/internal/ingestion_connectors/adapters/manual/` | Same |
+| `apps/api/internal/httpserver/manual_routes.go` | [operations/manual-upload.md](operations/manual-upload.md), [API_SURFACE_V1.md](API_SURFACE_V1.md) for new routes table |
+| `apps/api/internal/db/migrations/000045_manual_connector.*` | [UPGRADE_AND_ROLLBACK.md](UPGRADE_AND_ROLLBACK.md) §9, [CONNECTOR_CAPABILITY_MATRIX.md](CONNECTOR_CAPABILITY_MATRIX.md) |
+| `apps/web/src/app/control-plane/sources/collections/`, `apps/web/src/components/manual-upload/` | [operations/manual-upload.md](operations/manual-upload.md), [INFORMATION_ARCHITECTURE_V1.md](INFORMATION_ARCHITECTURE_V1.md) for the new CP surface |
+| `apps/api/cmd/api/main.go` BodyLimit | [operations/manual-upload.md](operations/manual-upload.md) (50 MiB upload cap rationale) |
+
 ### Cross-cutting HTTP and config
 
 | Code paths (primary) | Documentation to review/update |

@@ -55,7 +55,14 @@ func main() {
 		log.Printf("opensearch index: %v", err)
 	}
 
-	f := fiber.New(fiber.Config{ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second})
+	// BodyLimit 64 MiB: accommodates manual file uploads (50 MiB cap enforced
+	// in the upload handler) plus headers/multipart overhead. Default is 4 MiB,
+	// which would reject any non-trivial PDF/DOCX before our handler runs.
+	f := fiber.New(fiber.Config{
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		BodyLimit:    64 * 1024 * 1024,
+	})
 	f.Use(recover.New())
 	corsOrigins := os.Getenv("CORS_ALLOW_ORIGINS")
 	if corsOrigins == "" {

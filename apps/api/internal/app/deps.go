@@ -41,6 +41,7 @@ import (
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/intercom"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/jira"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/linear"
+	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/manual"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/mattermost"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/microsoft365"
 	"github.com/knowledgelayer/api/internal/ingestion_connectors/adapters/notion"
@@ -225,6 +226,7 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		mattermost.Adapter{},
 		http_url.Adapter{},
 		filesystem.Adapter{},
+		manual.Adapter{},
 		openapi_v3.Adapter{},
 		confluence.Adapter{},
 		asana.Adapter{},
@@ -258,6 +260,7 @@ func NewDeps(pool *pgxpool.Pool, cfg config.Config) (*Deps, error) {
 		return nil, fmt.Errorf("app: blobstore: %w", err)
 	}
 	ingestionSvc := ingestion_connectors.NewService(pool, adapterReg)
+	ingestionSvc.SetBlobStore(bs)
 	gOAuth, mOAuth := connectoroauth.OAuthConfigs(cfg)
 	ingestionSvc.ConfigureConnectorOAuth(gOAuth, mOAuth)
 	// v0.3.0: when an adapter writes via PersistNormalizedRecord, fire the
