@@ -7,7 +7,7 @@ require (
 	github.com/allegro/bigcache/v3 v3.1.0
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/getkin/kin-openapi v0.137.0
-	github.com/gofiber/fiber/v2 v2.52.12
+	github.com/gofiber/fiber/v2 v2.52.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.18.1
 	github.com/google/uuid v1.6.0
